@@ -454,39 +454,58 @@ textarea{resize:vertical;min-height:80px}
 .empty-icon{font-size:32px;margin-bottom:8px}
 .empty-text{font-size:13px;line-height:1.6}
 
-/* ─── TIME PICKER ─── */
+/* ─── TIME PICKER DRUM ─── */
 .time-picker{position:relative}
 .tp-display{
   background:var(--bg2);border:1.5px solid var(--border);
   border-radius:var(--r-sm);padding:9px 13px;font-size:14px;
   cursor:pointer;user-select:none;transition:border-color .15s;
-  display:flex;align-items:center;justify-content:space-between;
+  display:flex;align-items:center;gap:8px;
 }
 .tp-display:hover{border-color:var(--acc)}
-.tp-display::after{content:'⏰';font-size:13px}
-.tp-cols{
-  display:grid;grid-template-columns:1fr 1fr;gap:6px;
-  margin-top:6px;
+.tp-display-icon{font-size:14px;color:var(--text3)}
+.tp-display-val{flex:1;font-weight:500}
+.tp-display-clear{
+  font-size:16px;color:var(--text3);line-height:1;
+  padding:0 2px;display:none;
 }
-.tp-col{
-  display:flex;flex-wrap:wrap;gap:4px;
-  background:var(--bg2);border-radius:var(--r-sm);padding:6px;
+.tp-display-clear.visible{display:block}
+.tp-drum-wrap{
+  display:none;margin-top:6px;
+  background:var(--bg2);border-radius:var(--r-sm);
+  padding:8px;
 }
-.tp-btn{
-  flex:1;min-width:calc(50% - 2px);
-  padding:5px 4px;border-radius:6px;
-  font-size:12px;font-weight:600;text-align:center;
-  background:var(--bg3);color:var(--text2);cursor:pointer;
-  border:none;transition:background .12s,color .12s;
+.tp-drum-wrap.open{display:block}
+.tp-drums{display:flex;gap:8px;align-items:center;justify-content:center}
+.tp-drum{
+  flex:1;height:132px;overflow:hidden;position:relative;
+  cursor:grab;
 }
-.tp-btn:hover{background:var(--border)}
-.tp-btn.active{background:var(--acc);color:#fff}
-.tp-clear{
-  width:100%;margin-top:4px;padding:5px;border-radius:6px;
-  font-size:11px;font-weight:600;color:var(--text3);
-  background:none;border:none;cursor:pointer;text-align:center;
+.tp-drum:active{cursor:grabbing}
+.tp-drum-list{
+  display:flex;flex-direction:column;
+  transition:transform .15s cubic-bezier(.25,.8,.25,1);
 }
-.tp-clear:hover{color:var(--text)}
+.tp-drum-item{
+  height:44px;display:flex;align-items:center;justify-content:center;
+  font-size:18px;font-weight:600;color:var(--text3);
+  transition:color .12s,font-size .12s;flex-shrink:0;
+}
+.tp-drum-item.sel{color:var(--text);font-size:22px}
+.tp-drum-item.near{color:var(--text2);font-size:18px}
+.tp-drum-sep{font-size:22px;font-weight:700;color:var(--text2);padding:0 2px;margin-top:44px}
+.tp-drum-sel-line{
+  position:absolute;top:44px;left:0;right:0;height:44px;
+  border-top:1.5px solid var(--border);
+  border-bottom:1.5px solid var(--border);
+  pointer-events:none;border-radius:4px;
+}
+.tp-drum-footer{display:flex;justify-content:center;margin-top:8px}
+.tp-drum-clear{
+  font-size:12px;color:var(--text3);background:none;border:none;
+  cursor:pointer;padding:4px 12px;border-radius:6px;font-weight:500;
+}
+.tp-drum-clear:hover{color:var(--text);background:var(--bg3)}
 </style>
 </head>
 <body>
@@ -1165,10 +1184,26 @@ function openTaskModal(prefill = {}, task = null) {
       <div class="fg">
         <label class="flbl">Время</label>
         <div class="time-picker" id="tk-time-picker">
-          <div class="tp-display" id="tp-display">Без времени</div>
-          <div class="tp-cols" id="tp-cols" style="display:none">
-            <div class="tp-col" id="tp-hours"></div>
-            <div class="tp-col" id="tp-mins"></div>
+          <div class="tp-display" id="tp-display">
+            <span class="tp-display-icon">⏰</span>
+            <span class="tp-display-val">Без времени</span>
+            <span class="tp-display-clear" id="tp-clear-btn">×</span>
+          </div>
+          <div class="tp-drum-wrap" id="tp-drum-wrap">
+            <div class="tp-drums">
+              <div class="tp-drum" id="tp-drum-h">
+                <div class="tp-drum-sel-line"></div>
+                <div class="tp-drum-list" id="tp-dlist-h"></div>
+              </div>
+              <div class="tp-drum-sep">:</div>
+              <div class="tp-drum" id="tp-drum-m">
+                <div class="tp-drum-sel-line"></div>
+                <div class="tp-drum-list" id="tp-dlist-m"></div>
+              </div>
+            </div>
+            <div class="tp-drum-footer">
+              <button class="tp-drum-clear" id="tp-drum-clear" type="button">Без времени</button>
+            </div>
           </div>
         </div>
         <input type="hidden" id="tk-hour" value="${defHour !== '' ? defHour : ''}">
@@ -1192,76 +1227,131 @@ function openTaskModal(prefill = {}, task = null) {
   setTimeout(() => {
     document.getElementById('tk-title').focus();
 
-    // ── Time Picker init ──
+    // ── Time Picker Drum (iOS-style) ──
     (function initTimePicker() {
-      const HOURS = Array.from({length:18}, (_,i) => i+6); // 6..23
+      const HOURS = Array.from({length:18}, (_,i) => i+6);
       const MINS  = [0, 15, 30, 45];
-      let selH = defHour !== '' ? defHour : null;
-      let selM = task?.minute != null ? task.minute : 0;
+      let selH = defHour !== '' ? Number(defHour) : null;
+      let selM = task?.minute != null ? Number(task.minute) : 0;
 
-      const display  = document.getElementById('tp-display');
-      const colsWrap = document.getElementById('tp-cols');
-      const hoursCol = document.getElementById('tp-hours');
-      const minsCol  = document.getElementById('tp-mins');
-      const hidH     = document.getElementById('tk-hour');
-      const hidM     = document.getElementById('tk-min');
+      const displayVal = document.getElementById('tp-display').querySelector('.tp-display-val');
+      const clearBtn   = document.getElementById('tp-clear-btn');
+      const drumWrap   = document.getElementById('tp-drum-wrap');
+      const dlistH     = document.getElementById('tp-dlist-h');
+      const dlistM     = document.getElementById('tp-dlist-m');
+      const hidH       = document.getElementById('tk-hour');
+      const hidM       = document.getElementById('tk-min');
 
       function updateDisplay() {
         if (selH === null) {
-          display.childNodes[0] && (display.childNodes[0].textContent = 'Без времени');
-          display.firstChild.nodeType === 3
-            ? display.firstChild.textContent = 'Без времени'
-            : null;
-          display.innerHTML = 'Без времени <span style="font-size:13px">⏰</span>';
+          displayVal.textContent = 'Без времени';
+          clearBtn.classList.remove('visible');
           hidH.value = ''; hidM.value = '';
         } else {
-          const hh = String(selH).padStart(2,'0');
-          const mm = String(selM).padStart(2,'0');
-          display.innerHTML = `${hh}:${mm} <span style="font-size:13px">⏰</span>`;
+          displayVal.textContent = String(selH).padStart(2,'0') + ':' + String(selM).padStart(2,'0');
+          clearBtn.classList.add('visible');
           hidH.value = selH; hidM.value = selM;
         }
       }
 
-      function renderButtons() {
-        hoursCol.innerHTML = '';
-        minsCol.innerHTML  = '';
+      function buildDrum(listEl, items, selVal, onChange) {
+        listEl.innerHTML = '';
+        // padding items (2 above and below so selected is in center)
+        const pad = 2;
+        const allItems = [];
+        for (let i = 0; i < pad; i++) allItems.push(null);
+        items.forEach(v => allItems.push(v));
+        for (let i = 0; i < pad; i++) allItems.push(null);
 
-        HOURS.forEach(h => {
-          const b = document.createElement('button');
-          b.className = 'tp-btn' + (selH === h ? ' active' : '');
-          b.textContent = String(h).padStart(2,'0');
-          b.type = 'button';
-          b.onclick = () => {
-            selH = h; if (selM === null) selM = 0;
-            updateDisplay(); renderButtons();
-          };
-          hoursCol.appendChild(b);
+        allItems.forEach((v, idx) => {
+          const item = document.createElement('div');
+          item.className = 'tp-drum-item';
+          if (v === null) {
+            item.style.height = '44px';
+          } else {
+            item.textContent = String(v).padStart(2,'0');
+            const realIdx = idx - pad;
+            const dist = Math.abs(items.indexOf(selVal) - realIdx);
+            if (dist === 0) item.classList.add('sel');
+            else if (dist === 1) item.classList.add('near');
+            item.addEventListener('click', () => { onChange(v); });
+          }
+          listEl.appendChild(item);
         });
 
-        MINS.forEach(m => {
-          const b = document.createElement('button');
-          b.className = 'tp-btn' + (selM === m && selH !== null ? ' active' : '');
-          b.textContent = String(m).padStart(2,'0');
-          b.type = 'button';
-          b.onclick = () => { selM = m; updateDisplay(); renderButtons(); };
-          minsCol.appendChild(b);
-        });
+        // position scroll so selected is centered
+        const selIdx = items.indexOf(selVal);
+        listEl.style.transform = selIdx >= 0
+          ? `translateY(${-selIdx * 44}px)`
+          : 'translateY(0)';
 
-        // clear button
-        const clr = document.createElement('button');
-        clr.className = 'tp-clear'; clr.textContent = '✕ Без времени'; clr.type = 'button';
-        clr.onclick = () => { selH = null; selM = 0; updateDisplay(); renderButtons(); colsWrap.style.display = 'none'; };
-        minsCol.appendChild(clr);
+        // touch/pointer drag
+        setupDrumDrag(listEl, items, selVal, onChange);
       }
 
-      display.onclick = () => {
-        const open = colsWrap.style.display !== 'none';
-        colsWrap.style.display = open ? 'none' : 'grid';
-      };
+      function setupDrumDrag(listEl, items, selVal, onChange) {
+        let startY = 0, startOffset = 0, curOffset = 0;
+        const ITEM_H = 44;
+        let selIdx = Math.max(0, items.indexOf(selVal));
+        curOffset = -selIdx * ITEM_H;
+
+        function clampIdx(i) { return Math.max(0, Math.min(items.length - 1, i)); }
+
+        listEl.parentElement.addEventListener('pointerdown', e => {
+          startY = e.clientY;
+          startOffset = curOffset;
+          listEl.style.transition = 'none';
+          listEl.parentElement.setPointerCapture(e.pointerId);
+        });
+        listEl.parentElement.addEventListener('pointermove', e => {
+          if (!e.buttons) return;
+          const dy = e.clientY - startY;
+          curOffset = startOffset + dy;
+          listEl.style.transform = `translateY(${curOffset}px)`;
+        });
+        listEl.parentElement.addEventListener('pointerup', e => {
+          listEl.style.transition = '';
+          const dy = e.clientY - startY;
+          const moved = Math.round(-( startOffset + dy) / ITEM_H);
+          selIdx = clampIdx(moved);
+          curOffset = -selIdx * ITEM_H;
+          listEl.style.transform = `translateY(${curOffset}px)`;
+          onChange(items[selIdx]);
+        });
+      }
+
+      function render() {
+        const hIdx = selH !== null ? HOURS.indexOf(selH) : 0;
+        const mIdx = MINS.indexOf(selM);
+        buildDrum(dlistH, HOURS, selH !== null ? selH : HOURS[0], v => { selH = v; if(selM===null)selM=0; updateDisplay(); render(); });
+        buildDrum(dlistM, MINS,  selM, v => { selM = v; updateDisplay(); render(); });
+      }
+
+      // toggle open
+      document.getElementById('tp-display').addEventListener('click', e => {
+        if (e.target.closest('#tp-clear-btn')) return;
+        const open = drumWrap.classList.toggle('open');
+        if (open && selH === null) { selH = 9; selM = 0; updateDisplay(); render(); }
+        else if (open) render();
+      });
+
+      // clear btn (×)
+      clearBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        selH = null; selM = 0;
+        updateDisplay();
+        drumWrap.classList.remove('open');
+      });
+
+      // "Без времени" inside drum
+      document.getElementById('tp-drum-clear').addEventListener('click', () => {
+        selH = null; selM = 0;
+        updateDisplay();
+        drumWrap.classList.remove('open');
+      });
 
       updateDisplay();
-      renderButtons();
-      if (selH !== null) colsWrap.style.display = 'grid';
+      if (selH !== null) { render(); drumWrap.classList.add('open'); }
     })();
 
     document.querySelectorAll('#tk-tags .tpill').forEach(p => {
