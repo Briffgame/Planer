@@ -559,16 +559,43 @@ textarea{resize:vertical;min-height:80px}
   </div>
   <div class="sp-sec">
     <div style="font-size:13px;color:var(--text2);line-height:1.7">
-      Planner v3 — оффлайн-планировщик.<br>
-      Все данные хранятся локально в браузере (localStorage).<br>
-      Данные не уходят на сервер.
+      Planner v3 — планировщик с облачной синхронизацией.<br>
+      Данные синхронизируются между всеми устройствами через Firebase.<br>
+      Локальная копия также хранится в браузере.
     </div>
   </div>
 </div>
 
-<script>
+<script type="module">
 /* ════════════════════════════════════════════════════
-   STORAGE
+   FIREBASE
+════════════════════════════════════════════════════ */
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDBHw85SZcyfT2cwkPoEOuTb_qUVnyJcVw",
+  authDomain: "planer-ca414.firebaseapp.com",
+  projectId: "planer-ca414",
+  storageBucket: "planer-ca414.firebasestorage.app",
+  messagingSenderId: "28677358123",
+  appId: "1:28677358123:web:bcfcd306a02d001bf4e06e"
+};
+
+const fbApp = initializeApp(firebaseConfig);
+const db = getFirestore(fbApp);
+const SYNC_DOC = doc(db, 'planer', 'data');
+
+let syncPaused = false; // prevent echo on incoming updates
+
+async function saveToCloud(data) {
+  try {
+    await setDoc(SYNC_DOC, data);
+  } catch(e) { console.warn('Firebase save error', e); }
+}
+
+/* ════════════════════════════════════════════════════
+   STORAGE (localStorage fallback)
 ════════════════════════════════════════════════════ */
 const S = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
@@ -624,6 +651,7 @@ function saveAll() {
   S.set('pl_notes',    notes);
   S.set('pl_projects', projects);
   S.set('pl_settings', settings);
+  if (!syncPaused) saveToCloud({ tasks, habits, notes, projects, settings });
 }
 
 /* ════════════════════════════════════════════════════
@@ -1544,6 +1572,25 @@ function emptyState(icon, text) {
 ════════════════════════════════════════════════════ */
 applyTheme();
 renderDay();
+
+// 🔥 Firebase real-time listener
+onSnapshot(SYNC_DOC, snap => {
+  if (!snap.exists()) return;
+  const d = snap.data();
+  syncPaused = true;
+  tasks    = d.tasks    ?? tasks;
+  habits   = d.habits   ?? habits;
+  notes    = d.notes    ?? notes;
+  projects = d.projects ?? projects;
+  // merge settings but keep local theme preference
+  if (d.settings) { settings = { ...settings, ...d.settings }; }
+  S.set('pl_tasks', tasks); S.set('pl_habits', habits);
+  S.set('pl_notes', notes); S.set('pl_projects', projects);
+  S.set('pl_settings', settings);
+  applyTheme();
+  refreshCurrentView();
+  syncPaused = false;
+});
 </script>
 </body>
 </html>
