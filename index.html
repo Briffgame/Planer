@@ -834,23 +834,7 @@ function renderDay() {
   });
   view.appendChild(gridWrap);
 
-  /* ── touch swipe — ровно 1 день ── */
-  let sx = 0, sy = 0;
-  view.addEventListener('touchstart', e => {
-    sx = e.touches[0].clientX;
-    sy = e.touches[0].clientY;
-  }, { passive: true });
-  view.addEventListener('touchend', e => {
-    const dx = e.changedTouches[0].clientX - sx;
-    const dy = Math.abs(e.changedTouches[0].clientY - sy);
-    // горизонтальный свайп: смещение по X > 60px и по Y < 40px
-    if (Math.abs(dx) > 60 && dy < 40) {
-      const next = cloneDate(curDay);   // всегда копия — не мутируем оригинал
-      next.setDate(next.getDate() + (dx < 0 ? 1 : -1));  // строго ±1 день
-      curDay = next;
-      renderDay();
-    }
-  });
+  /* swipe отключён — навигация только кнопками */
 }
 
 function mkNtTask(task) {
