@@ -453,6 +453,40 @@ textarea{resize:vertical;min-height:80px}
 .empty-state{text-align:center;padding:32px 20px;color:var(--text3)}
 .empty-icon{font-size:32px;margin-bottom:8px}
 .empty-text{font-size:13px;line-height:1.6}
+
+/* ─── TIME PICKER ─── */
+.time-picker{position:relative}
+.tp-display{
+  background:var(--bg2);border:1.5px solid var(--border);
+  border-radius:var(--r-sm);padding:9px 13px;font-size:14px;
+  cursor:pointer;user-select:none;transition:border-color .15s;
+  display:flex;align-items:center;justify-content:space-between;
+}
+.tp-display:hover{border-color:var(--acc)}
+.tp-display::after{content:'⏰';font-size:13px}
+.tp-cols{
+  display:grid;grid-template-columns:1fr 1fr;gap:6px;
+  margin-top:6px;
+}
+.tp-col{
+  display:flex;flex-wrap:wrap;gap:4px;
+  background:var(--bg2);border-radius:var(--r-sm);padding:6px;
+}
+.tp-btn{
+  flex:1;min-width:calc(50% - 2px);
+  padding:5px 4px;border-radius:6px;
+  font-size:12px;font-weight:600;text-align:center;
+  background:var(--bg3);color:var(--text2);cursor:pointer;
+  border:none;transition:background .12s,color .12s;
+}
+.tp-btn:hover{background:var(--border)}
+.tp-btn.active{background:var(--acc);color:#fff}
+.tp-clear{
+  width:100%;margin-top:4px;padding:5px;border-radius:6px;
+  font-size:11px;font-weight:600;color:var(--text3);
+  background:none;border:none;cursor:pointer;text-align:center;
+}
+.tp-clear:hover{color:var(--text)}
 </style>
 </head>
 <body>
@@ -740,14 +774,12 @@ function renderDay() {
   ntHdr.innerHTML = `<span>Задачи дня <span style="color:var(--text3);font-weight:500">${openCnt ? openCnt + ' открытых' : ''}</span></span>`;
   noTimeSec.appendChild(ntHdr);
 
-  if (noTimeTasks.length === 0) {
-    const hint = el('div');
-    hint.style.cssText = 'font-size:12px;color:var(--text3);padding:3px 0 8px';
-    hint.textContent = 'Нет задач без привязки ко времени';
-    noTimeSec.appendChild(hint);
-  } else {
-    noTimeTasks.forEach(task => noTimeSec.appendChild(mkNtTask(task)));
-  }
+  noTimeTasks.forEach(task => noTimeSec.appendChild(mkNtTask(task)));
+  const addNtBtn = el('button');
+  addNtBtn.style.cssText = 'font-size:12px;color:var(--acc);padding:4px 0 8px;display:block;background:none;border:none;cursor:pointer;font-weight:600';
+  addNtBtn.textContent = '+ Добавить задачу дня';
+  addNtBtn.onclick = () => openTaskModal({ date: key });
+  noTimeSec.appendChild(addNtBtn);
   view.appendChild(noTimeSec);
 
   /* ── time grid ── */
@@ -823,7 +855,7 @@ function mkChip(task) {
   if (proj) chip.style.borderLeftColor = proj.color;
   chip.innerHTML = `
     <div class="chip-chk">${isDone ? '✓' : ''}</div>
-    <span class="chip-name">${task.title}</span>
+    <span class="chip-name">${task.hour != null && task.minute ? `<span style="font-size:10px;color:var(--text3);margin-right:4px">${p2(task.hour)}:${p2(task.minute)}</span>` : ''}${task.title}</span>
     ${proj ? `<span class="chip-proj" style="background:${proj.color}22;color:${proj.color}">${proj.name}</span>` : ''}
   `;
   chip.querySelector('.chip-chk').addEventListener('click', e => {
@@ -880,12 +912,12 @@ function renderWeek() {
 
     // tasks for this day
     const dayT = tasks.filter(t => t.date === key);
-    const sorted = [...dayT].sort((a, b) => (a.hour ?? 99) - (b.hour ?? 99));
+    const sorted = [...dayT].sort((a, b) => ((a.hour ?? 99)*60 + (a.minute ?? 0)) - ((b.hour ?? 99)*60 + (b.minute ?? 0)));
     sorted.forEach(t => {
       const proj = projBy(t.projectId);
       const col  = proj ? proj.color : settings.accent;
       const done = t.status === 'done';
-      const timePrefix = t.hour != null ? `${p2(t.hour)} ` : '';
+      const timePrefix = t.hour != null ? `${p2(t.hour)}:${p2(t.minute ?? 0)} ` : '';
       html += `<div class="w-item w-task${done ? ' w-done' : ''}" style="border-left-color:${col}" title="${t.title}">${timePrefix}${t.title}</div>`;
     });
 
@@ -966,7 +998,7 @@ function mkKCard(task, col) {
       ${proj ? `<span class="kbadge" style="background:${proj.color}22;color:${proj.color}">${proj.name}</span>` : ''}
       ${tag  ? `<span class="kbadge" style="background:${tag.bg};color:${tag.color}">${tag.name}</span>` : ''}
       ${task.date ? `<span class="kbadge" style="background:var(--bg2);color:var(--text3)">📅 ${task.date.slice(5).replace('-','.')}</span>` : ''}
-      ${task.hour != null ? `<span class="kbadge" style="background:var(--bg2);color:var(--text3)">⏰ ${p2(task.hour)}:00</span>` : ''}
+      ${task.hour != null ? `<span class="kbadge" style="background:var(--bg2);color:var(--text3)">⏰ ${p2(task.hour)}:${p2(task.minute ?? 0)}</span>` : ''}
     </div>
     <div class="kcard-acts">
       <button class="kact" data-a="edit">✏️ Изменить</button>
@@ -1132,10 +1164,15 @@ function openTaskModal(prefill = {}, task = null) {
       </div>
       <div class="fg">
         <label class="flbl">Время</label>
-        <select id="tk-hour">
-          <option value="">Без времени</option>
-          ${HRS.map(h => `<option value="${h}" ${defHour === h ? 'selected' : ''}>${p2(h)}:00</option>`).join('')}
-        </select>
+        <div class="time-picker" id="tk-time-picker">
+          <div class="tp-display" id="tp-display">Без времени</div>
+          <div class="tp-cols" id="tp-cols" style="display:none">
+            <div class="tp-col" id="tp-hours"></div>
+            <div class="tp-col" id="tp-mins"></div>
+          </div>
+        </div>
+        <input type="hidden" id="tk-hour" value="${defHour !== '' ? defHour : ''}">
+        <input type="hidden" id="tk-min" value="${task?.minute != null ? task.minute : ''}">
       </div>
     </div>
     <div class="fg">
@@ -1155,6 +1192,78 @@ function openTaskModal(prefill = {}, task = null) {
   setTimeout(() => {
     document.getElementById('tk-title').focus();
 
+    // ── Time Picker init ──
+    (function initTimePicker() {
+      const HOURS = Array.from({length:18}, (_,i) => i+6); // 6..23
+      const MINS  = [0, 15, 30, 45];
+      let selH = defHour !== '' ? defHour : null;
+      let selM = task?.minute != null ? task.minute : 0;
+
+      const display  = document.getElementById('tp-display');
+      const colsWrap = document.getElementById('tp-cols');
+      const hoursCol = document.getElementById('tp-hours');
+      const minsCol  = document.getElementById('tp-mins');
+      const hidH     = document.getElementById('tk-hour');
+      const hidM     = document.getElementById('tk-min');
+
+      function updateDisplay() {
+        if (selH === null) {
+          display.childNodes[0] && (display.childNodes[0].textContent = 'Без времени');
+          display.firstChild.nodeType === 3
+            ? display.firstChild.textContent = 'Без времени'
+            : null;
+          display.innerHTML = 'Без времени <span style="font-size:13px">⏰</span>';
+          hidH.value = ''; hidM.value = '';
+        } else {
+          const hh = String(selH).padStart(2,'0');
+          const mm = String(selM).padStart(2,'0');
+          display.innerHTML = `${hh}:${mm} <span style="font-size:13px">⏰</span>`;
+          hidH.value = selH; hidM.value = selM;
+        }
+      }
+
+      function renderButtons() {
+        hoursCol.innerHTML = '';
+        minsCol.innerHTML  = '';
+
+        HOURS.forEach(h => {
+          const b = document.createElement('button');
+          b.className = 'tp-btn' + (selH === h ? ' active' : '');
+          b.textContent = String(h).padStart(2,'0');
+          b.type = 'button';
+          b.onclick = () => {
+            selH = h; if (selM === null) selM = 0;
+            updateDisplay(); renderButtons();
+          };
+          hoursCol.appendChild(b);
+        });
+
+        MINS.forEach(m => {
+          const b = document.createElement('button');
+          b.className = 'tp-btn' + (selM === m && selH !== null ? ' active' : '');
+          b.textContent = String(m).padStart(2,'0');
+          b.type = 'button';
+          b.onclick = () => { selM = m; updateDisplay(); renderButtons(); };
+          minsCol.appendChild(b);
+        });
+
+        // clear button
+        const clr = document.createElement('button');
+        clr.className = 'tp-clear'; clr.textContent = '✕ Без времени'; clr.type = 'button';
+        clr.onclick = () => { selH = null; selM = 0; updateDisplay(); renderButtons(); colsWrap.style.display = 'none'; };
+        minsCol.appendChild(clr);
+      }
+
+      display.onclick = () => {
+        const open = colsWrap.style.display !== 'none';
+        colsWrap.style.display = open ? 'none' : 'grid';
+      };
+
+      updateDisplay();
+      renderButtons();
+      if (selH !== null) colsWrap.style.display = 'grid';
+    })();
+
     document.querySelectorAll('#tk-tags .tpill').forEach(p => {
       p.addEventListener('click', () => {
         document.querySelectorAll('#tk-tags .tpill').forEach(x => x.classList.remove('sel'));
@@ -1171,13 +1280,15 @@ function openTaskModal(prefill = {}, task = null) {
       const status    = document.getElementById('tk-status').value;
       const date      = document.getElementById('tk-date').value    || null;
       const hv        = document.getElementById('tk-hour').value;
-      const hour      = hv ? parseInt(hv) : null;
+      const mv        = document.getElementById('tk-min').value;
+      const hour      = hv !== '' ? parseInt(hv) : null;
+      const minute    = hv !== '' ? (mv !== '' ? parseInt(mv) : 0) : null;
 
       if (isEdit) {
         const t = tasks.find(x => x.id === task.id);
-        if (t) Object.assign(t, { title, projectId, status, date, hour, tag: selTag });
+        if (t) Object.assign(t, { title, projectId, status, date, hour, minute, tag: selTag });
       } else {
-        tasks.push({ id: uid(), title, projectId, status, date, hour, tag: selTag, created: Date.now() });
+        tasks.push({ id: uid(), title, projectId, status, date, hour, minute, tag: selTag, created: Date.now() });
       }
 
       saveAll();
