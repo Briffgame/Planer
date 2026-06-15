@@ -1,0 +1,1547 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#ffffff" id="theme-meta">
+<title>Planner</title>
+<!--
+  ARCHITECTURE v3
+  ───────────────────────────────────────────────────────
+  Единая модель задачи (Task):
+    { id, title, projectId|null, date|null (YYYY-MM-DD),
+      hour|null (int 6-23), tag|null, status: todo|doing|done, created }
+
+  Отображается везде по одному источнику:
+    ДЕНЬ    → tasks где date === currentDayKey
+    НЕДЕЛЯ  → tasks где date попадает в неделю
+    ЗАДАЧИ  → все tasks, сгруппированы по status
+    ПРОЕКТЫ → tasks где projectId === proj.id
+
+  Шкала времени в ДНЕ — строки HRS (6-23).
+    Задача с hour → рисуется внутри соответствующей строки.
+    Задача без hour → рисуется в «шапке» дня (без времени).
+
+  Добавление задачи из ЛЮБОЙ вкладки:
+    FAB → openTaskModal(prefillDate, prefillHour, prefillProjectId)
+    Тап на строку времени → openTaskModal(dk, h)
+  ───────────────────────────────────────────────────────
+-->
+<style>
+:root{
+  --acc:#5B5FEF;
+  --bg:#fff;--bg2:#f5f5f7;--bg3:#e8e8ec;
+  --card:#fff;--border:#e2e2e7;
+  --text:#111114;--text2:#6b6b7a;--text3:#a0a0b0;
+  --nav-h:62px;--safe-b:env(safe-area-inset-bottom,0px);
+  --r:12px;--r-sm:8px;
+  font-family:'DM Sans','Helvetica Neue',Arial,sans-serif;
+}
+.dark{
+  --bg:#0f0f12;--bg2:#1a1a1f;--bg3:#252530;
+  --card:#1a1a1f;--border:#2d2d38;
+  --text:#f0f0f5;--text2:#8888a0;--text3:#55556a;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;background:var(--bg);color:var(--text);overflow:hidden}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,textarea,select{
+  font-family:inherit;color:var(--text);
+  background:var(--bg2);border:1.5px solid var(--border);
+  border-radius:var(--r-sm);padding:9px 13px;font-size:14px;outline:none;width:100%;
+  transition:border-color .15s;
+}
+input:focus,textarea:focus,select:focus{border-color:var(--acc)}
+select{
+  -webkit-appearance:none;appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23999'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 11px center;padding-right:28px;
+}
+textarea{resize:vertical;min-height:80px}
+::-webkit-scrollbar{width:2px}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+
+/* ─── LAYOUT ─── */
+#app{display:flex;flex-direction:column;height:100dvh}
+#topbar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:10px 16px 8px;
+  padding-top:calc(10px + env(safe-area-inset-top,0px));
+  background:var(--bg);border-bottom:1px solid var(--border);
+  flex-shrink:0;z-index:20;
+}
+#topbar-title{font-size:17px;font-weight:700;letter-spacing:-.3px}
+#topbar-right{display:flex;gap:4px}
+.icon-btn{
+  width:34px;height:34px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--bg2);font-size:15px;flex-shrink:0;
+  transition:background .12s;
+}
+.icon-btn:active{background:var(--bg3)}
+#views{flex:1;overflow:hidden;position:relative}
+.view{position:absolute;inset:0;overflow-y:auto;display:none;background:var(--bg)}
+.view.active{display:block}
+
+/* ─── BOTTOM NAV ─── */
+#nav{
+  display:flex;background:var(--bg);
+  border-top:1px solid var(--border);
+  padding-bottom:calc(5px + var(--safe-b));
+  flex-shrink:0;z-index:20;
+}
+.nav-tab{
+  flex:1;display:flex;flex-direction:column;align-items:center;
+  padding:7px 2px 3px;gap:2px;
+  font-size:9px;font-weight:700;letter-spacing:.04em;
+  text-transform:uppercase;color:var(--text3);
+  transition:color .12s;
+}
+.nav-tab svg{width:19px;height:19px;stroke:currentColor;stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.nav-tab.active{color:var(--acc)}
+
+/* ─── FAB ─── */
+#fab{
+  position:fixed;right:16px;
+  bottom:calc(var(--nav-h) + 12px + var(--safe-b));
+  width:48px;height:48px;border-radius:50%;
+  background:var(--acc);color:#fff;font-size:24px;
+  box-shadow:0 4px 16px rgba(91,95,239,.4);
+  display:flex;align-items:center;justify-content:center;
+  z-index:30;transition:transform .12s;
+}
+#fab:active{transform:scale(.9)}
+
+/* ─── MODAL / SHEET ─── */
+#overlay{
+  position:fixed;inset:0;background:rgba(0,0,0,.42);
+  z-index:100;display:none;align-items:flex-end;
+}
+#overlay.open{display:flex}
+@media(min-width:580px){#overlay{align-items:center;justify-content:center}}
+#sheet{
+  width:100%;max-width:520px;
+  background:var(--bg);
+  border-radius:20px 20px 0 0;
+  padding:0 0 calc(22px + var(--safe-b));
+  max-height:93dvh;overflow-y:auto;
+}
+@media(min-width:580px){#sheet{border-radius:18px;margin:auto;max-height:86vh}}
+.sh-handle{width:32px;height:4px;background:var(--border);border-radius:4px;margin:11px auto 12px}
+.sh-hdr{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 18px 11px;border-bottom:1px solid var(--border);
+}
+.sh-title{font-size:16px;font-weight:700}
+.sh-close{font-size:22px;color:var(--text3);line-height:1;padding:2px 4px}
+.sh-body{padding:15px 18px}
+.fg{margin-bottom:11px}
+.flbl{
+  font-size:11px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.05em;color:var(--text2);
+  margin-bottom:5px;display:block;
+}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.btn-row{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+.btn{
+  height:42px;border-radius:var(--r-sm);font-size:14px;font-weight:600;
+  padding:0 16px;display:flex;align-items:center;justify-content:center;
+  gap:5px;white-space:nowrap;transition:opacity .12s,transform .1s;
+}
+.btn:active{opacity:.8;transform:scale(.98)}
+.btn-p{background:var(--acc);color:#fff;flex:1}
+.btn-g{background:var(--bg2);color:var(--text2)}
+.btn-d{background:rgba(220,38,38,.12);color:#dc2626}
+.dark .btn-d{background:rgba(220,38,38,.2);color:#f87171}
+.tag-picker{display:flex;flex-wrap:wrap;gap:5px}
+.tpill{
+  font-size:11px;padding:3px 10px;border-radius:20px;
+  font-weight:600;border:2px solid transparent;cursor:pointer;
+  transition:border-color .12s;
+}
+.tpill.sel{border-color:var(--text)}
+
+/* ─── TODAY VIEW ─── */
+.day-hdr{
+  display:flex;align-items:center;gap:8px;
+  padding:9px 16px;
+  position:sticky;top:0;background:var(--bg);z-index:10;
+  border-bottom:1px solid var(--border);
+}
+.day-nav{
+  width:30px;height:30px;border-radius:50%;
+  background:var(--bg2);display:flex;align-items:center;justify-content:center;
+  font-size:16px;flex-shrink:0;
+}
+.day-nav:active{background:var(--bg3)}
+.day-title-wrap{flex:1;display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.day-date{font-size:16px;font-weight:700}
+.day-dow{font-size:12px;color:var(--text2)}
+.today-pill{
+  font-size:10px;font-weight:700;padding:2px 8px;
+  border-radius:20px;background:var(--acc);color:#fff;
+}
+
+/* no-time tasks section */
+.day-notime{padding:8px 16px 0}
+.sec-hdr{
+  font-size:11px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.05em;color:var(--text3);
+  display:flex;align-items:center;justify-content:space-between;
+  padding:6px 0 4px;
+}
+.nt-task{
+  display:flex;align-items:center;gap:8px;
+  background:var(--bg2);border-radius:8px;
+  padding:7px 10px;margin-bottom:4px;
+  cursor:pointer;
+  border-left:3px solid var(--acc);
+  transition:background .1s;
+}
+.nt-task:active{background:var(--bg3)}
+.nt-task.nt-done .nt-name{text-decoration:line-through;color:var(--text3)}
+.nt-chk{
+  width:18px;height:18px;border-radius:50%;
+  border:2px solid var(--border);flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;font-size:10px;
+  transition:all .12s;
+}
+.nt-task.nt-done .nt-chk{background:var(--acc);border-color:var(--acc);color:#fff}
+.nt-name{font-size:13px;font-weight:500;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nt-proj{
+  font-size:10px;padding:1px 6px;border-radius:20px;
+  font-weight:600;flex-shrink:0;max-width:80px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+
+/* time grid */
+.time-grid{padding:4px 16px 100px}
+.time-sep{
+  font-size:11px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.05em;color:var(--text3);
+  padding:8px 0 4px;border-top:1px solid var(--border);
+  margin-top:4px;
+}
+.trow{
+  display:flex;gap:9px;align-items:stretch;
+  min-height:52px;border-bottom:1px solid var(--border);
+  padding:5px 0;cursor:pointer;
+  transition:background .1s;
+}
+.trow:hover{background:var(--bg2);border-radius:6px;margin:0 -4px;padding:5px 4px}
+.trow:hover .tlbl{color:var(--acc)}
+.tlbl{
+  width:40px;font-size:11px;color:var(--text3);
+  font-weight:500;padding-top:3px;flex-shrink:0;
+  font-variant-numeric:tabular-nums;
+}
+.tevts{flex:1;display:flex;flex-direction:column;gap:3px}
+.add-hint{font-size:11px;color:var(--text3);padding-top:3px;display:none}
+.trow:hover .add-hint{display:block}
+
+/* task chip in time grid */
+.task-chip{
+  display:flex;align-items:center;gap:7px;
+  border-radius:7px;padding:5px 9px;
+  cursor:pointer;font-size:12px;font-weight:500;
+  border-left:3px solid var(--acc);
+  background:var(--bg2);
+  transition:background .1s;
+}
+.task-chip:active{background:var(--bg3)}
+.task-chip.done-chip .chip-name{text-decoration:line-through;color:var(--text3)}
+.chip-chk{
+  width:16px;height:16px;border-radius:50%;
+  border:2px solid var(--border);flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;font-size:9px;
+}
+.task-chip.done-chip .chip-chk{background:var(--acc);border-color:var(--acc);color:#fff}
+.chip-name{flex:1}
+.chip-proj{
+  font-size:10px;padding:1px 5px;border-radius:20px;
+  font-weight:600;flex-shrink:0;
+}
+
+/* ─── WEEK VIEW ─── */
+.week-hdr{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:9px 16px;position:sticky;top:0;
+  background:var(--bg);z-index:10;border-bottom:1px solid var(--border);
+}
+.wk-nav{
+  width:30px;height:30px;border-radius:50%;background:var(--bg2);
+  display:flex;align-items:center;justify-content:center;font-size:16px;
+}
+.wk-nav:active{background:var(--bg3)}
+.week-scroll{overflow-x:auto;padding:8px 12px 100px}
+.wtbl{min-width:520px;width:100%;border-collapse:separate;border-spacing:3px 0}
+.wtbl th{
+  font-size:10px;font-weight:700;color:var(--text3);
+  text-transform:uppercase;letter-spacing:.04em;
+  padding:0 3px 6px;text-align:center;
+}
+.wday{
+  vertical-align:top;padding:4px 3px;
+  border-right:1px solid var(--border);cursor:pointer;
+}
+.wday:last-child{border-right:none}
+.wday-num-wrap{text-align:center;margin-bottom:5px}
+.wday-num{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:25px;height:25px;border-radius:50%;
+  font-size:13px;font-weight:700;
+}
+.wday-today .wday-num{background:var(--acc);color:#fff}
+.w-item{
+  font-size:10px;font-weight:500;
+  padding:2px 4px;border-radius:4px;margin-bottom:2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  cursor:pointer;
+}
+.w-task{background:var(--bg2);color:var(--text);border-left:2px solid var(--acc)}
+.w-task.w-done{opacity:.45;text-decoration:line-through}
+
+/* ─── TASKS (kanban) ─── */
+.tasks-outer{padding:10px 14px 100px;min-height:100%;overflow-x:auto}
+.k-filt{margin-bottom:10px}
+.k-filt select{width:auto;min-width:140px;font-size:12px;padding:5px 26px 5px 10px;height:30px}
+.kcols{display:flex;gap:10px;min-width:max-content}
+@media(min-width:680px){.kcols{min-width:0;flex-wrap:wrap}}
+.kcol{flex:0 0 250px;min-width:250px}
+@media(min-width:680px){.kcol{flex:1;min-width:180px}}
+.kcol-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}
+.kcol-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text2)}
+.kcol-add{
+  width:22px;height:22px;border-radius:50%;
+  background:var(--bg2);font-size:16px;
+  display:flex;align-items:center;justify-content:center;color:var(--text2);
+}
+.kcol-add:active{background:var(--bg3)}
+.kcards{display:flex;flex-direction:column;gap:6px;min-height:50px;border-radius:var(--r);transition:background .15s}
+.kcards.drag-over-col{background:rgba(91,95,239,.06);outline:2px dashed var(--acc);outline-offset:2px}
+.kcard{
+  background:var(--card);border:1px solid var(--border);
+  border-radius:var(--r);padding:9px 11px;
+  cursor:grab;user-select:none;
+  transition:box-shadow .12s,opacity .12s;
+  position:relative;overflow:hidden;touch-action:none;
+}
+.kcard.is-dragging{opacity:.35;box-shadow:none}
+.kcard-ghost{
+  position:fixed;pointer-events:none;z-index:9999;
+  border-radius:var(--r);padding:9px 11px;
+  background:var(--card);border:1.5px solid var(--acc);
+  box-shadow:0 8px 24px rgba(0,0,0,.18);
+  opacity:.92;transition:none;overflow:hidden;
+}
+.kcard-bar{position:absolute;left:0;top:0;bottom:0;width:3px}
+.kcard-title{font-size:13px;font-weight:500;line-height:1.4;padding-left:8px}
+.kcard-meta{display:flex;gap:4px;flex-wrap:wrap;margin-top:5px;padding-left:8px}
+.kbadge{font-size:10px;padding:1px 6px;border-radius:20px;font-weight:600}
+.kcard-acts{display:flex;gap:4px;margin-top:6px;padding-left:8px}
+.kact{font-size:11px;padding:3px 8px;border-radius:5px;background:var(--bg2);color:var(--text2);font-weight:500}
+.kact:hover{background:var(--bg3)}
+/* drop-zone kept for compat but hidden — we highlight .kcards instead */
+.drop-zone{display:none!important}
+
+/* ─── HABITS ─── */
+.hb-wrap{padding:12px 16px 100px}
+.hb-topbar{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);margin-bottom:10px}
+.hb-item{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--r);
+  padding:11px 13px;margin-bottom:7px;
+  display:flex;align-items:center;gap:11px;cursor:pointer;transition:background .1s;
+}
+.hb-item:active{background:var(--bg2)}
+.hb-chk{
+  width:23px;height:23px;border-radius:50%;
+  border:2px solid var(--border);flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;transition:all .15s;
+}
+.hb-item.hb-done .hb-chk{background:var(--acc);border-color:var(--acc);color:#fff;font-size:12px}
+.hb-name{font-size:14px;font-weight:500}
+.hb-streak{font-size:11px;color:var(--text3);margin-top:1px}
+.hb-del{font-size:18px;color:var(--text3);padding:4px;margin-left:auto}
+.heat-sec{margin-top:16px}
+.heat-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);margin-bottom:6px}
+.heat-map{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
+.hcell{aspect-ratio:1;border-radius:3px;background:var(--bg3)}
+.hcell.l1{background:rgba(91,95,239,.2)}.hcell.l2{background:rgba(91,95,239,.45)}.hcell.l3{background:rgba(91,95,239,.7)}.hcell.l4{background:var(--acc)}
+
+/* ─── NOTES ─── */
+.notes-sb{position:sticky;top:0;background:var(--bg);padding:8px 16px 7px;z-index:10;border-bottom:1px solid var(--border)}
+.notes-sb input{border-radius:20px;padding:7px 14px;font-size:13px}
+.notes-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:8px;padding:9px 16px 100px}
+.note-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:11px;cursor:pointer;min-height:100px;transition:box-shadow .12s}
+.note-card:hover{box-shadow:0 2px 10px rgba(0,0,0,.07)}
+.note-title{font-size:13px;font-weight:600;margin-bottom:4px;word-break:break-word}
+.note-body{font-size:12px;color:var(--text2);line-height:1.5;overflow:hidden;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical}
+.note-foot{display:flex;justify-content:space-between;align-items:center;margin-top:6px}
+.note-tag{font-size:10px;padding:1px 6px;border-radius:20px;font-weight:600}
+.note-date{font-size:10px;color:var(--text3)}
+
+/* ─── PROJECTS ─── */
+.proj-outer{padding:12px 16px 100px}
+.proj-stats{display:flex;gap:7px;margin-bottom:12px}
+.pstat{flex:1;background:var(--bg2);border-radius:var(--r-sm);padding:9px;text-align:center}
+.pstat-num{font-size:19px;font-weight:700}
+.pstat-lbl{font-size:10px;color:var(--text3);margin-top:1px}
+.pcard{background:var(--card);border:1px solid var(--border);border-radius:var(--r);margin-bottom:9px;overflow:hidden}
+.pcard-hdr{display:flex;align-items:center;gap:9px;padding:11px 13px;cursor:pointer;transition:background .1s}
+.pcard-hdr:active{background:var(--bg2)}
+.p-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.p-name{font-size:14px;font-weight:600;flex:1}
+.p-meta{display:flex;align-items:center;gap:7px}
+.p-pct{font-size:12px;font-weight:700}
+.p-open{font-size:11px;color:var(--text3)}
+.p-chev{font-size:13px;color:var(--text3);transition:transform .2s}
+.p-chev.open{transform:rotate(90deg)}
+.p-prog{height:3px;background:var(--bg3);margin:0 13px 0}
+.p-prog-bar{height:100%;border-radius:2px;transition:width .3s}
+.p-tasks{border-top:1px solid var(--border)}
+.p-task{
+  display:flex;align-items:center;gap:8px;
+  padding:8px 13px;border-bottom:1px solid var(--border);cursor:pointer;
+  transition:background .1s;
+}
+.p-task:last-child{border-bottom:none}
+.p-task:active{background:var(--bg2)}
+.p-task.pt-done .pt-name{text-decoration:line-through;color:var(--text3)}
+.pt-chk{
+  width:17px;height:17px;border-radius:50%;
+  border:2px solid var(--border);flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;font-size:10px;
+}
+.p-task.pt-done .pt-chk{background:var(--acc);border-color:var(--acc);color:#fff}
+.pt-name{font-size:13px;flex:1}
+.pt-date{font-size:11px;color:var(--text3)}
+.pt-status{font-size:10px;padding:2px 6px;border-radius:20px;font-weight:600}
+.p-acts{display:flex;gap:5px;padding:9px 13px;border-top:1px solid var(--border)}
+.pact{font-size:12px;padding:4px 11px;border-radius:6px;background:var(--bg2);color:var(--text2);font-weight:500}
+.pact:active{background:var(--bg3)}
+.pact.danger{color:#dc2626}
+.dark .pact.danger{color:#f87171}
+
+/* ─── SETTINGS ─── */
+#sp{
+  position:fixed;inset:0;background:var(--bg);z-index:200;
+  transform:translateY(100%);transition:transform .28s cubic-bezier(.25,.8,.25,1);
+  overflow-y:auto;padding-bottom:40px;
+}
+#sp.open{transform:none}
+.sp-hdr{display:flex;align-items:center;gap:10px;padding:13px 16px;padding-top:calc(13px + env(safe-area-inset-top,0px));border-bottom:1px solid var(--border)}
+.sp-back{font-size:20px;color:var(--text2)}
+.sp-title{font-size:17px;font-weight:700}
+.sp-sec{padding:11px 16px;border-bottom:1px solid var(--border)}
+.sp-sec-t{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);margin-bottom:9px}
+.sp-row{display:flex;align-items:center;justify-content:space-between;padding:4px 0}
+.sp-lbl{font-size:14px}
+.toggle{width:42px;height:24px;border-radius:12px;background:var(--bg3);position:relative;cursor:pointer;transition:background .18s;flex-shrink:0}
+.toggle.on{background:var(--acc)}
+.toggle::after{content:'';position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform .18s;box-shadow:0 1px 4px rgba(0,0,0,.2)}
+.toggle.on::after{transform:translateX(18px)}
+.accents{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}
+.adot{width:26px;height:26px;border-radius:50%;cursor:pointer;border:3px solid transparent;transition:transform .12s}
+.adot.active{border-color:var(--text);transform:scale(1.12)}
+.xbtn{width:100%;height:40px;border-radius:var(--r-sm);background:var(--bg2);color:var(--text);font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:6px;margin-bottom:6px}
+.xbtn:active{background:var(--bg3)}
+
+/* ─── MISC ─── */
+.empty-state{text-align:center;padding:32px 20px;color:var(--text3)}
+.empty-icon{font-size:32px;margin-bottom:8px}
+.empty-text{font-size:13px;line-height:1.6}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topbar">
+    <div id="topbar-title">Сегодня</div>
+    <div id="topbar-right">
+      <button class="icon-btn" id="btn-dark">🌙</button>
+      <button class="icon-btn" id="btn-settings">⚙️</button>
+    </div>
+  </div>
+
+  <div id="views">
+    <!-- TODAY -->
+    <div class="view active" id="view-today"></div>
+
+    <!-- WEEK -->
+    <div class="view" id="view-week"></div>
+
+    <!-- TASKS -->
+    <div class="view" id="view-tasks">
+      <div class="tasks-outer" id="tasks-outer"></div>
+    </div>
+
+    <!-- HABITS -->
+    <div class="view" id="view-habits">
+      <div class="hb-wrap" id="hb-wrap"></div>
+    </div>
+
+    <!-- NOTES -->
+    <div class="view" id="view-notes">
+      <div class="notes-sb"><input type="text" id="notes-search" placeholder="Поиск заметок…"></div>
+      <div class="notes-grid" id="notes-grid"></div>
+    </div>
+
+    <!-- PROJECTS -->
+    <div class="view" id="view-projects">
+      <div class="proj-outer" id="proj-outer"></div>
+    </div>
+  </div>
+
+  <nav id="nav">
+    <button class="nav-tab active" data-tab="today">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      День
+    </button>
+    <button class="nav-tab" data-tab="week">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="7" y1="15" x2="7" y2="15" stroke-width="3"/><line x1="12" y1="15" x2="12" y2="15" stroke-width="3"/><line x1="17" y1="15" x2="17" y2="15" stroke-width="3"/></svg>
+      Неделя
+    </button>
+    <button class="nav-tab" data-tab="tasks">
+      <svg viewBox="0 0 24 24"><line x1="9" y1="7" x2="20" y2="7"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="17" x2="20" y2="17"/><circle cx="4" cy="7" r="1.5" fill="currentColor" stroke="none"/><circle cx="4" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="4" cy="17" r="1.5" fill="currentColor" stroke="none"/></svg>
+      Задачи
+    </button>
+    <button class="nav-tab" data-tab="habits">
+      <svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></svg>
+      Привычки
+    </button>
+    <button class="nav-tab" data-tab="notes">
+      <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      Заметки
+    </button>
+    <button class="nav-tab" data-tab="projects">
+      <svg viewBox="0 0 24 24"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>
+      Проекты
+    </button>
+  </nav>
+</div>
+
+<button id="fab" aria-label="Добавить">+</button>
+
+<!-- MODAL -->
+<div id="overlay">
+  <div id="sheet">
+    <div class="sh-handle"></div>
+    <div class="sh-hdr">
+      <span class="sh-title" id="sh-title">Новая задача</span>
+      <button class="sh-close" id="sh-close">×</button>
+    </div>
+    <div class="sh-body" id="sh-body"></div>
+  </div>
+</div>
+
+<!-- SETTINGS PANEL -->
+<div id="sp">
+  <div class="sp-hdr">
+    <button class="sp-back" id="sp-back">‹</button>
+    <div class="sp-title">Настройки</div>
+  </div>
+  <div class="sp-sec">
+    <div class="sp-sec-t">Внешний вид</div>
+    <div class="sp-row"><span class="sp-lbl">Тёмная тема</span><div class="toggle" id="dark-toggle"></div></div>
+    <div style="margin-top:9px">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);margin-bottom:7px">Цвет акцента</div>
+      <div class="accents" id="accent-row"></div>
+    </div>
+  </div>
+  <div class="sp-sec">
+    <div class="sp-sec-t">Данные</div>
+    <button class="xbtn" id="export-btn">📤 Экспорт в JSON</button>
+    <button class="xbtn" id="import-btn">📥 Импорт из JSON</button>
+    <input type="file" id="import-file" accept=".json" style="display:none">
+    <button class="xbtn" id="clear-btn" style="color:#dc2626;margin-top:2px">🗑 Очистить все данные</button>
+  </div>
+  <div class="sp-sec">
+    <div style="font-size:13px;color:var(--text2);line-height:1.7">
+      Planner v3 — оффлайн-планировщик.<br>
+      Все данные хранятся локально в браузере (localStorage).<br>
+      Данные не уходят на сервер.
+    </div>
+  </div>
+</div>
+
+<script>
+/* ════════════════════════════════════════════════════
+   STORAGE
+════════════════════════════════════════════════════ */
+const S = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+};
+
+/* ════════════════════════════════════════════════════
+   STATE
+════════════════════════════════════════════════════ */
+let settings = S.get('pl_settings', { dark: false, accent: '#5B5FEF' });
+let tasks    = S.get('pl_tasks', []);      // ЕДИНЫЙ источник правды
+let habits   = S.get('pl_habits', { habits: [], log: {} });
+let notes    = S.get('pl_notes', []);
+let projects = S.get('pl_projects', []);
+
+let currentTab = 'today';
+let curDay = (() => { const d = new Date(); d.setHours(0,0,0,0); return d; })();
+let weekOffset = 0;
+// drag handled via Pointer Events in setupPointerDrag()
+
+/* ════════════════════════════════════════════════════
+   HELPERS
+════════════════════════════════════════════════════ */
+const dk  = d => `${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}`;
+const p2  = n => String(n).padStart(2, '0');
+const uid = () => Math.random().toString(36).slice(2, 10);
+const today = () => { const d = new Date(); d.setHours(0,0,0,0); return d; };
+const cloneDate = d => { const x = new Date(d); x.setHours(0,0,0,0); return x; };
+
+const DN   = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
+const MF   = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+const MS   = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+const HRS  = Array.from({length: 18}, (_, i) => i + 6); // 6..23
+
+const TAGS = [
+  { name:'Работа',   color:'#5B5FEF', bg:'rgba(91,95,239,.14)'  },
+  { name:'Личное',   color:'#10b981', bg:'rgba(16,185,129,.14)' },
+  { name:'Здоровье', color:'#f59e0b', bg:'rgba(245,158,11,.14)' },
+  { name:'Учёба',    color:'#ec4899', bg:'rgba(236,72,153,.14)' },
+  { name:'Другое',   color:'#6b7280', bg:'rgba(107,114,128,.14)'},
+];
+const SLBL  = { todo: 'К выполнению', doing: 'В процессе', done: 'Готово' };
+const SCOL  = { todo: '#f59e0b', doing: '#5B5FEF', done: '#10b981' };
+const ACCS  = ['#5B5FEF','#10b981','#f59e0b','#ec4899','#ef4444','#06b6d4','#8b5cf6'];
+const PCOLS = ['#5B5FEF','#10b981','#f59e0b','#ec4899','#ef4444','#06b6d4','#8b5cf6','#f97316','#0ea5e9'];
+
+const tagN   = n => TAGS.find(t => t.name === n) || TAGS[4];
+const projBy = id => projects.find(p => p.id === id);
+
+function saveAll() {
+  S.set('pl_tasks',    tasks);
+  S.set('pl_habits',   habits);
+  S.set('pl_notes',    notes);
+  S.set('pl_projects', projects);
+  S.set('pl_settings', settings);
+}
+
+/* ════════════════════════════════════════════════════
+   SETTINGS / THEME
+════════════════════════════════════════════════════ */
+function applyTheme() {
+  document.documentElement.classList.toggle('dark', settings.dark);
+  document.getElementById('btn-dark').textContent = settings.dark ? '☀️' : '🌙';
+  document.documentElement.style.setProperty('--acc', settings.accent);
+  document.getElementById('theme-meta').content = settings.dark ? '#0f0f12' : '#ffffff';
+  const dt = document.getElementById('dark-toggle');
+  if (dt) dt.classList.toggle('on', settings.dark);
+  document.querySelectorAll('.adot').forEach(d => d.classList.toggle('active', d.dataset.c === settings.accent));
+}
+
+/* ════════════════════════════════════════════════════
+   ROUTER
+════════════════════════════════════════════════════ */
+const TAB_TITLES = { today:'Сегодня', week:'Неделя', tasks:'Задачи', habits:'Привычки', notes:'Заметки', projects:'Проекты' };
+
+function updateTopbar() {
+  let title = TAB_TITLES[currentTab] || currentTab;
+  if (currentTab === 'today') {
+    const todayKey = dk(today());
+    title = dk(curDay) === todayKey
+      ? 'Сегодня'
+      : `${curDay.getDate()} ${MF[curDay.getMonth()]}`;
+  }
+  document.getElementById('topbar-title').textContent = title;
+}
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('view-' + tab).classList.add('active');
+  document.querySelector(`.nav-tab[data-tab="${tab}"]`).classList.add('active');
+  updateTopbar();
+  document.getElementById('fab').style.display = 'flex';
+  ({ today: renderDay, week: renderWeek, tasks: renderTasks,
+     habits: renderHabits, notes: renderNotes, projects: renderProjects })[tab]?.();
+}
+
+/* ════════════════════════════════════════════════════
+   TODAY VIEW
+   Layout:
+     ① compact day header (← date →)
+     ② "Без времени" strip  — tasks с date=curDay И hour=null
+     ③ time grid 06–23      — each row: tasks с date=curDay И hour=h
+════════════════════════════════════════════════════ */
+function renderDay() {
+  updateTopbar();
+  const key    = dk(curDay);
+  const todKey = dk(today());
+  const dayTasks = tasks.filter(t => t.date === key);
+  const noTimeTasks  = dayTasks.filter(t => t.hour == null);
+  const timedTasks   = dayTasks.filter(t => t.hour != null);
+
+  const view = document.getElementById('view-today');
+  view.innerHTML = '';
+
+  /* ── header ── */
+  const diff = Math.round((curDay - today()) / 86400000);
+  let sub = DN[curDay.getDay()];
+  if (diff === 1) sub += ' · Завтра';
+  else if (diff === -1) sub += ' · Вчера';
+
+  const hdr = el('div', 'day-hdr');
+  hdr.innerHTML = `
+    <button class="day-nav" id="d-prev">‹</button>
+    <div class="day-title-wrap">
+      <span class="day-date">${curDay.getDate()} ${MF[curDay.getMonth()]}</span>
+      <span class="day-dow">${sub}</span>
+      ${key === todKey ? '<span class="today-pill">сегодня</span>' : ''}
+    </div>
+    <button class="day-nav" id="d-next">›</button>
+  `;
+  hdr.querySelector('#d-prev').onclick = () => { curDay.setDate(curDay.getDate()-1); renderDay(); };
+  hdr.querySelector('#d-next').onclick = () => { curDay.setDate(curDay.getDate()+1); renderDay(); };
+  view.appendChild(hdr);
+
+  /* ── no-time tasks strip ── */
+  const noTimeSec = el('div', 'day-notime');
+  const ntHdr = el('div', 'sec-hdr');
+  const openCnt = noTimeTasks.filter(t => t.status !== 'done').length;
+  ntHdr.innerHTML = `<span>Задачи дня <span style="color:var(--text3);font-weight:500">${openCnt ? openCnt + ' открытых' : ''}</span></span>`;
+  noTimeSec.appendChild(ntHdr);
+
+  if (noTimeTasks.length === 0) {
+    const hint = el('div');
+    hint.style.cssText = 'font-size:12px;color:var(--text3);padding:3px 0 8px';
+    hint.textContent = 'Нет задач без привязки ко времени';
+    noTimeSec.appendChild(hint);
+  } else {
+    noTimeTasks.forEach(task => noTimeSec.appendChild(mkNtTask(task)));
+  }
+  view.appendChild(noTimeSec);
+
+  /* ── time grid ── */
+  const gridWrap = el('div', 'time-grid');
+  const sep = el('div', 'time-sep');
+  sep.textContent = 'Расписание';
+  gridWrap.appendChild(sep);
+
+  HRS.forEach(h => {
+    const hTasks = timedTasks.filter(t => t.hour === h);
+    const row = el('div', 'trow');
+    const lbl = el('div', 'tlbl');
+    lbl.textContent = p2(h) + ':00';
+    const evts = el('div', 'tevts');
+    const hint = el('div', 'add-hint');
+    hint.textContent = '+ добавить задачу';
+    row.appendChild(lbl);
+    row.appendChild(evts);
+    row.appendChild(hint);
+
+    // click empty area → new task with this hour pre-filled
+    row.addEventListener('click', e => {
+      if (e.target.closest('.task-chip') || e.target.closest('.chip-chk')) return;
+      openTaskModal({ date: key, hour: h });
+    });
+
+    hTasks.forEach(task => {
+      const chip = mkChip(task);
+      evts.appendChild(chip);
+    });
+
+    gridWrap.appendChild(row);
+  });
+  view.appendChild(gridWrap);
+
+  /* ── touch swipe ── */
+  let sx = 0, sy = 0;
+  view.addEventListener('touchstart', e => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
+  view.addEventListener('touchend', e => {
+    const dx = e.changedTouches[0].clientX - sx;
+    const dy = Math.abs(e.changedTouches[0].clientY - sy);
+    if (Math.abs(dx) > 60 && dy < 50) { curDay.setDate(curDay.getDate() + (dx < 0 ? 1 : -1)); renderDay(); }
+  });
+}
+
+function mkNtTask(task) {
+  const proj = projBy(task.projectId);
+  const isDone = task.status === 'done';
+  const row = el('div', 'nt-task' + (isDone ? ' nt-done' : ''));
+  if (proj) row.style.borderLeftColor = proj.color;
+  row.innerHTML = `
+    <div class="nt-chk">${isDone ? '✓' : ''}</div>
+    <span class="nt-name">${task.title}</span>
+    ${proj ? `<span class="nt-proj" style="background:${proj.color}22;color:${proj.color}">${proj.name}</span>` : ''}
+  `;
+  row.querySelector('.nt-chk').addEventListener('click', e => {
+    e.stopPropagation();
+    const t = tasks.find(x => x.id === task.id);
+    if (t) t.status = t.status === 'done' ? 'todo' : 'done';
+    saveAll(); renderDay();
+  });
+  row.addEventListener('click', e => {
+    if (e.target.closest('.nt-chk')) return;
+    openTaskModal({}, task);
+  });
+  return row;
+}
+
+function mkChip(task) {
+  const proj = projBy(task.projectId);
+  const isDone = task.status === 'done';
+  const chip = el('div', 'task-chip' + (isDone ? ' done-chip' : ''));
+  if (proj) chip.style.borderLeftColor = proj.color;
+  chip.innerHTML = `
+    <div class="chip-chk">${isDone ? '✓' : ''}</div>
+    <span class="chip-name">${task.title}</span>
+    ${proj ? `<span class="chip-proj" style="background:${proj.color}22;color:${proj.color}">${proj.name}</span>` : ''}
+  `;
+  chip.querySelector('.chip-chk').addEventListener('click', e => {
+    e.stopPropagation();
+    const t = tasks.find(x => x.id === task.id);
+    if (t) t.status = t.status === 'done' ? 'todo' : 'done';
+    saveAll(); renderDay();
+  });
+  chip.addEventListener('click', e => {
+    if (e.target.closest('.chip-chk')) return;
+    openTaskModal({}, task);
+  });
+  return chip;
+}
+
+/* ════════════════════════════════════════════════════
+   WEEK VIEW
+════════════════════════════════════════════════════ */
+function renderWeek() {
+  const ref = today();
+  ref.setDate(ref.getDate() + weekOffset * 7);
+  const dow = ref.getDay();
+  const mon = cloneDate(ref); mon.setDate(ref.getDate() - (dow === 0 ? 6 : dow - 1));
+  const sun = cloneDate(mon); sun.setDate(mon.getDate() + 6);
+
+  const view = document.getElementById('view-week');
+  view.innerHTML = `
+    <div class="week-hdr">
+      <button class="wk-nav" id="w-prev">‹</button>
+      <div style="font-size:15px;font-weight:700">${mon.getDate()} ${MS[mon.getMonth()]} – ${sun.getDate()} ${MS[sun.getMonth()]}</div>
+      <button class="wk-nav" id="w-next">›</button>
+    </div>
+    <div class="week-scroll">
+      <table class="wtbl"><thead><tr id="wth"></tr></thead><tbody><tr id="wtb"></tr></tbody></table>
+    </div>
+  `;
+  view.querySelector('#w-prev').onclick = () => { weekOffset--; renderWeek(); };
+  view.querySelector('#w-next').onclick = () => { weekOffset++; renderWeek(); };
+
+  const thead = view.querySelector('#wth');
+  const tbody = view.querySelector('#wtb');
+
+  for (let i = 0; i < 7; i++) {
+    const d = cloneDate(mon); d.setDate(mon.getDate() + i);
+    const key = dk(d);
+    const isToday = key === dk(today());
+
+    const th = el('th'); th.textContent = DN[d.getDay()]; thead.appendChild(th);
+
+    const td = el('td', 'wday' + (isToday ? ' wday-today' : ''));
+    td.addEventListener('click', () => { curDay = cloneDate(d); switchTab('today'); });
+
+    let html = `<div class="wday-num-wrap"><div class="wday-num">${d.getDate()}</div></div>`;
+
+    // tasks for this day
+    const dayT = tasks.filter(t => t.date === key);
+    const sorted = [...dayT].sort((a, b) => (a.hour ?? 99) - (b.hour ?? 99));
+    sorted.forEach(t => {
+      const proj = projBy(t.projectId);
+      const col  = proj ? proj.color : settings.accent;
+      const done = t.status === 'done';
+      const timePrefix = t.hour != null ? `${p2(t.hour)} ` : '';
+      html += `<div class="w-item w-task${done ? ' w-done' : ''}" style="border-left-color:${col}" title="${t.title}">${timePrefix}${t.title}</div>`;
+    });
+
+    td.innerHTML = html;
+    td.querySelectorAll('.w-item').forEach(item => {
+      item.addEventListener('click', e => { e.stopPropagation(); curDay = cloneDate(d); switchTab('today'); });
+    });
+    tbody.appendChild(td);
+  }
+}
+
+/* ════════════════════════════════════════════════════
+   TASKS VIEW — kanban
+════════════════════════════════════════════════════ */
+const COLS = ['todo', 'doing', 'done'];
+
+function renderTasks() {
+  const outer = document.getElementById('tasks-outer');
+  const prevFilter = document.getElementById('kfilt')?.value || 'all';
+  outer.innerHTML = '';
+
+  // filter bar
+  const fBar = el('div', 'k-filt');
+  fBar.innerHTML = `
+    <select id="kfilt">
+      <option value="all">Все проекты</option>
+      ${projects.map(p => `<option value="${p.id}" ${prevFilter === p.id ? 'selected' : ''}>${p.name}</option>`).join('')}
+      <option value="none" ${prevFilter === 'none' ? 'selected' : ''}>Без проекта</option>
+    </select>
+  `;
+  fBar.querySelector('#kfilt').addEventListener('change', e => buildKanban(e.target.value));
+  outer.appendChild(fBar);
+
+  const colsWrap = el('div', 'kcols');
+  outer.appendChild(colsWrap);
+  buildKanban(prevFilter, colsWrap);
+}
+
+function buildKanban(fp, colsWrap) {
+  if (!colsWrap) colsWrap = document.querySelector('.kcols');
+  colsWrap.innerHTML = '';
+
+  COLS.forEach(col => {
+    let ct = tasks.filter(t => t.status === col);
+    if (fp === 'none') ct = ct.filter(t => !t.projectId);
+    else if (fp !== 'all') ct = ct.filter(t => t.projectId === fp);
+
+    const colEl = el('div', 'kcol'); colEl.dataset.col = col;
+    colEl.innerHTML = `
+      <div class="kcol-hdr">
+        <span class="kcol-title">${SLBL[col]} <span style="color:var(--text3);font-weight:400">${ct.length}</span></span>
+        <button class="kcol-add">+</button>
+      </div>
+      <div class="kcards" id="kc-${col}"></div>
+    `;
+    colEl.querySelector('.kcol-add').onclick = () => openTaskModal({ status: col });
+    colsWrap.appendChild(colEl);
+
+    const cardsEl = document.getElementById('kc-' + col);
+    if (ct.length === 0) {
+      cardsEl.innerHTML = '<div class="empty-state" style="padding:12px 0"><div class="empty-text" style="font-size:12px">Пусто</div></div>';
+    }
+    ct.forEach(task => cardsEl.appendChild(mkKCard(task, col)));
+    setupColDrop(colEl, col);
+  });
+}
+
+function mkKCard(task, col) {
+  const proj = projBy(task.projectId);
+  const tag  = task.tag ? tagN(task.tag) : null;
+  const card = el('div', 'kcard');
+  card.dataset.id = task.id;
+  card.dataset.col = col;
+  card.innerHTML = `
+    ${proj ? `<div class="kcard-bar" style="background:${proj.color}"></div>` : ''}
+    <div class="kcard-title">${task.title}</div>
+    <div class="kcard-meta">
+      ${proj ? `<span class="kbadge" style="background:${proj.color}22;color:${proj.color}">${proj.name}</span>` : ''}
+      ${tag  ? `<span class="kbadge" style="background:${tag.bg};color:${tag.color}">${tag.name}</span>` : ''}
+      ${task.date ? `<span class="kbadge" style="background:var(--bg2);color:var(--text3)">📅 ${task.date.slice(5).replace('-','.')}</span>` : ''}
+      ${task.hour != null ? `<span class="kbadge" style="background:var(--bg2);color:var(--text3)">⏰ ${p2(task.hour)}:00</span>` : ''}
+    </div>
+    <div class="kcard-acts">
+      <button class="kact" data-a="edit">✏️ Изменить</button>
+      <button class="kact" data-a="mv">${col==='todo'?'▶ В работу':col==='doing'?'✓ Готово':'↩ Вернуть'}</button>
+      <button class="kact" data-a="del">🗑</button>
+    </div>
+  `;
+  card.querySelector('[data-a=edit]').onclick = e => { e.stopPropagation(); openTaskModal({}, task); };
+  card.querySelector('[data-a=del]').onclick  = e => { e.stopPropagation(); tasks = tasks.filter(t => t.id !== task.id); saveAll(); renderTasks(); };
+  card.querySelector('[data-a=mv]').onclick   = e => {
+    e.stopPropagation();
+    const nc = col === 'todo' ? 'doing' : col === 'doing' ? 'done' : 'todo';
+    const t = tasks.find(x => x.id === task.id); if (t) t.status = nc;
+    saveAll(); renderTasks();
+  };
+  // pointer-events drag (works on desktop + mobile, no overflow issues)
+  setupPointerDrag(card, task, col);
+  return card;
+}
+
+// setupColDrop: kept as no-op (pointer drag handles drops directly)
+function setupColDrop(colEl, col) { /* handled by pointer drag */ }
+
+/* ── Pointer Events Drag & Drop ──────────────────────────────
+   Works in: Chrome, Firefox, Safari, mobile browsers.
+   No native DnD used (it breaks inside overflow:auto).
+   Steps:
+     1. pointerdown → record offset, set capture
+     2. pointermove → move ghost, highlight target column
+     3. pointerup   → drop into highlighted column
+──────────────────────────────────────────────────────────── */
+function setupPointerDrag(card, task, col) {
+  let ghost = null;
+  let startX = 0, startY = 0;
+  let offsetX = 0, offsetY = 0;
+  let dragging = false;
+  let targetCol = null;
+  const THRESHOLD = 6; // px before drag starts
+
+  card.addEventListener('pointerdown', e => {
+    // ignore clicks on action buttons
+    if (e.target.closest('.kact')) return;
+    // only primary button / finger
+    if (e.button !== 0 && e.pointerType === 'mouse') return;
+
+    startX = e.clientX;
+    startY = e.clientY;
+    const rect = card.getBoundingClientRect();
+    offsetX = e.clientX - rect.left;
+    offsetY = e.clientY - rect.top;
+
+    card.setPointerCapture(e.pointerId);
+
+    card.addEventListener('pointermove', onMove);
+    card.addEventListener('pointerup',   onUp);
+    card.addEventListener('pointercancel', onUp);
+  });
+
+  function onMove(e) {
+    const dx = Math.abs(e.clientX - startX);
+    const dy = Math.abs(e.clientY - startY);
+
+    if (!dragging && (dx > THRESHOLD || dy > THRESHOLD)) {
+      dragging = true;
+      // create ghost
+      ghost = card.cloneNode(true);
+      ghost.className = 'kcard-ghost';
+      ghost.style.width = card.offsetWidth + 'px';
+      document.body.appendChild(ghost);
+      card.classList.add('is-dragging');
+    }
+
+    if (!dragging) return;
+    e.preventDefault();
+
+    ghost.style.left = (e.clientX - offsetX) + 'px';
+    ghost.style.top  = (e.clientY - offsetY) + 'px';
+
+    // find which .kcards container we're over
+    ghost.style.display = 'none';
+    const hit = document.elementFromPoint(e.clientX, e.clientY);
+    ghost.style.display = '';
+
+    const newTargetEl = hit?.closest('.kcards');
+    const newCol = hit?.closest('.kcol')?.dataset?.col || null;
+
+    // clear previous highlight
+    document.querySelectorAll('.kcards').forEach(c => c.classList.remove('drag-over-col'));
+
+    if (newTargetEl && newCol) {
+      newTargetEl.classList.add('drag-over-col');
+      targetCol = newCol;
+    } else {
+      targetCol = null;
+    }
+  }
+
+  function onUp(e) {
+    card.removeEventListener('pointermove', onMove);
+    card.removeEventListener('pointerup',   onUp);
+    card.removeEventListener('pointercancel', onUp);
+
+    if (ghost) { ghost.remove(); ghost = null; }
+    card.classList.remove('is-dragging');
+    document.querySelectorAll('.kcards').forEach(c => c.classList.remove('drag-over-col'));
+
+    if (dragging && targetCol) {
+      const t = tasks.find(x => x.id === task.id);
+      if (t && t.status !== targetCol) { t.status = targetCol; saveAll(); }
+      renderTasks();
+    } else if (!dragging) {
+      // it was a tap/click — open edit modal
+      openTaskModal({}, task);
+    }
+
+    dragging = false;
+    targetCol = null;
+  }
+}
+
+/* ════════════════════════════════════════════════════
+   TASK MODAL  — openTaskModal(prefill, task)
+   prefill: { date?, hour?, status?, projectId? }
+   task:    existing task to edit (null = create)
+════════════════════════════════════════════════════ */
+function openTaskModal(prefill = {}, task = null) {
+  const isEdit = !!task;
+  const defDate   = task?.date   ?? prefill.date   ?? '';
+  const defHour   = task?.hour   ?? prefill.hour   ?? '';
+  const defStatus = task?.status ?? prefill.status ?? 'todo';
+  const defProj   = task?.projectId ?? prefill.projectId ?? '';
+
+  const projOpts = projects.map(p =>
+    `<option value="${p.id}" ${defProj === p.id ? 'selected' : ''}>${p.name}</option>`
+  ).join('');
+
+  showModal(isEdit ? 'Редактировать задачу' : 'Новая задача', `
+    <div class="fg">
+      <label class="flbl">Название</label>
+      <input type="text" id="tk-title" placeholder="Что нужно сделать?" value="${task?.title || ''}">
+    </div>
+    <div class="two-col">
+      <div class="fg">
+        <label class="flbl">Проект</label>
+        <select id="tk-proj">
+          <option value="">Без проекта</option>
+          ${projOpts}
+        </select>
+      </div>
+      <div class="fg">
+        <label class="flbl">Статус</label>
+        <select id="tk-status">
+          <option value="todo"  ${defStatus === 'todo'  ? 'selected' : ''}>К выполнению</option>
+          <option value="doing" ${defStatus === 'doing' ? 'selected' : ''}>В процессе</option>
+          <option value="done"  ${defStatus === 'done'  ? 'selected' : ''}>Готово</option>
+        </select>
+      </div>
+    </div>
+    <div class="two-col">
+      <div class="fg">
+        <label class="flbl">Дата выполнения</label>
+        <input type="date" id="tk-date" value="${defDate}">
+      </div>
+      <div class="fg">
+        <label class="flbl">Время</label>
+        <select id="tk-hour">
+          <option value="">Без времени</option>
+          ${HRS.map(h => `<option value="${h}" ${defHour === h ? 'selected' : ''}>${p2(h)}:00</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="fg">
+      <label class="flbl">Тег</label>
+      <div class="tag-picker" id="tk-tags">
+        ${TAGS.map(t => `<span class="tpill ${task?.tag === t.name ? 'sel' : ''}" data-tag="${t.name}" style="background:${t.bg};color:${t.color}">${t.name}</span>`).join('')}
+      </div>
+    </div>
+    <div class="btn-row">
+      ${isEdit ? '<button class="btn btn-d" id="tk-del">Удалить</button>' : ''}
+      <button class="btn btn-p" id="tk-save">Сохранить</button>
+    </div>
+  `);
+
+  let selTag = task?.tag || null;
+
+  setTimeout(() => {
+    document.getElementById('tk-title').focus();
+
+    document.querySelectorAll('#tk-tags .tpill').forEach(p => {
+      p.addEventListener('click', () => {
+        document.querySelectorAll('#tk-tags .tpill').forEach(x => x.classList.remove('sel'));
+        if (selTag === p.dataset.tag) { selTag = null; }
+        else { p.classList.add('sel'); selTag = p.dataset.tag; }
+      });
+    });
+
+    document.getElementById('tk-save').onclick = () => {
+      const title = document.getElementById('tk-title').value.trim();
+      if (!title) { document.getElementById('tk-title').focus(); return; }
+
+      const projectId = document.getElementById('tk-proj').value   || null;
+      const status    = document.getElementById('tk-status').value;
+      const date      = document.getElementById('tk-date').value    || null;
+      const hv        = document.getElementById('tk-hour').value;
+      const hour      = hv ? parseInt(hv) : null;
+
+      if (isEdit) {
+        const t = tasks.find(x => x.id === task.id);
+        if (t) Object.assign(t, { title, projectId, status, date, hour, tag: selTag });
+      } else {
+        tasks.push({ id: uid(), title, projectId, status, date, hour, tag: selTag, created: Date.now() });
+      }
+
+      saveAll();
+      closeModal();
+      // refresh whichever view is active
+      refreshCurrentView();
+    };
+
+    const db = document.getElementById('tk-del');
+    if (db) db.onclick = () => {
+      tasks = tasks.filter(t => t.id !== task.id);
+      saveAll(); closeModal(); refreshCurrentView();
+    };
+  }, 50);
+}
+
+function refreshCurrentView() {
+  ({ today: renderDay, week: renderWeek, tasks: renderTasks,
+     habits: renderHabits, notes: () => {}, projects: renderProjects })[currentTab]?.();
+}
+
+/* ════════════════════════════════════════════════════
+   HABITS
+════════════════════════════════════════════════════ */
+function renderHabits() {
+  const wrap = document.getElementById('hb-wrap'); wrap.innerHTML = '';
+  const key  = dk(today()), log = habits.log[key] || [];
+  const done = habits.habits.filter(h => log.includes(h.id)).length;
+
+  const bar = el('div', 'hb-topbar');
+  bar.textContent = `Сегодня: ${done} / ${habits.habits.length}`;
+  wrap.appendChild(bar);
+
+  if (!habits.habits.length) {
+    wrap.appendChild(emptyState('⭐', 'Добавьте первую привычку'));
+  }
+
+  habits.habits.forEach(h => {
+    const isDone = log.includes(h.id);
+    const streak = calcStreak(h.id);
+    const item = el('div', 'hb-item' + (isDone ? ' hb-done' : ''));
+    item.innerHTML = `
+      <div class="hb-chk">${isDone ? '✓' : ''}</div>
+      <div style="flex:1">
+        <div class="hb-name">${h.name}</div>
+        <div class="hb-streak">${streak > 0 ? `🔥 ${streak} дн. подряд` : 'Начните сегодня!'}</div>
+      </div>
+      <button class="hb-del">×</button>
+    `;
+    item.querySelector('.hb-chk').addEventListener('click', () => {
+      if (!habits.log[key]) habits.log[key] = [];
+      if (isDone) habits.log[key] = habits.log[key].filter(x => x !== h.id);
+      else habits.log[key].push(h.id);
+      saveAll(); renderHabits();
+    });
+    item.querySelector('.hb-del').addEventListener('click', e => {
+      e.stopPropagation(); habits.habits = habits.habits.filter(x => x.id !== h.id); saveAll(); renderHabits();
+    });
+    wrap.appendChild(item);
+  });
+
+  if (habits.habits.length) {
+    const hs = el('div', 'heat-sec');
+    hs.innerHTML = '<div class="heat-title">Активность за 4 недели</div><div class="heat-map" id="heatmap"></div>';
+    wrap.appendChild(hs);
+    const hm = hs.querySelector('#heatmap');
+    for (let i = 27; i >= 0; i--) {
+      const d = today(); d.setDate(d.getDate() - i);
+      const k = dk(d); const dl = habits.log[k] || [];
+      const ratio = habits.habits.length ? dl.length / habits.habits.length : 0;
+      const c = el('div', 'hcell' + (ratio === 0 ? '' : ratio < .34 ? ' l1' : ratio < .67 ? ' l2' : ratio < 1 ? ' l3' : ' l4'));
+      c.title = `${d.getDate()}.${d.getMonth()+1}: ${dl.length}/${habits.habits.length}`;
+      hm.appendChild(c);
+    }
+  }
+}
+
+function calcStreak(hid) {
+  let s = 0; const d = today();
+  while (true) { const k = dk(d); if (!(habits.log[k] || []).includes(hid)) break; s++; d.setDate(d.getDate()-1); }
+  return s;
+}
+
+function openHabitModal() {
+  showModal('Новая привычка', `
+    <div class="fg"><label class="flbl">Название</label><input type="text" id="hb-n" placeholder="Зарядка, Чтение, Медитация…"></div>
+    <div class="btn-row"><button class="btn btn-p" id="hb-sv">Добавить</button></div>
+  `);
+  setTimeout(() => {
+    document.getElementById('hb-n').focus();
+    document.getElementById('hb-sv').onclick = () => {
+      const name = document.getElementById('hb-n').value.trim(); if (!name) return;
+      habits.habits.push({ id: uid(), name }); saveAll(); closeModal(); renderHabits();
+    };
+  }, 50);
+}
+
+/* ════════════════════════════════════════════════════
+   NOTES
+════════════════════════════════════════════════════ */
+function renderNotes(filter = '') {
+  const grid = document.getElementById('notes-grid'); grid.innerHTML = '';
+  const q = filter.toLowerCase();
+  const fil = notes.filter(n => !q || n.title.toLowerCase().includes(q) || n.body.toLowerCase().includes(q));
+  if (!fil.length) { grid.appendChild(emptyState('📝', q ? 'Ничего не найдено' : 'Нет заметок')); return; }
+  [...fil].reverse().forEach(note => {
+    const tag = note.tag ? tagN(note.tag) : null;
+    const c = el('div', 'note-card');
+    c.innerHTML = `
+      <div class="note-title">${note.title || 'Без названия'}</div>
+      <div class="note-body">${note.body}</div>
+      <div class="note-foot">
+        ${tag ? `<span class="note-tag" style="background:${tag.bg};color:${tag.color}">${tag.name}</span>` : '<span></span>'}
+        <span class="note-date">${new Date(note.created).toLocaleDateString('ru',{day:'numeric',month:'short'})}</span>
+      </div>
+    `;
+    c.addEventListener('click', () => openNoteModal(note));
+    grid.appendChild(c);
+  });
+}
+
+function openNoteModal(note = null) {
+  let selTag = note?.tag || null;
+  showModal(note ? 'Редактировать заметку' : 'Новая заметка', `
+    <div class="fg"><label class="flbl">Заголовок</label><input type="text" id="nt-t" value="${note?.title || ''}" placeholder="Заголовок…"></div>
+    <div class="fg"><label class="flbl">Текст</label><textarea id="nt-b" rows="5" placeholder="Текст заметки…">${note?.body || ''}</textarea></div>
+    <div class="fg"><label class="flbl">Тег</label>
+      <div class="tag-picker" id="nt-tags">
+        ${TAGS.map(t => `<span class="tpill ${note?.tag === t.name ? 'sel' : ''}" data-tag="${t.name}" style="background:${t.bg};color:${t.color}">${t.name}</span>`).join('')}
+      </div>
+    </div>
+    <div class="btn-row">
+      ${note ? '<button class="btn btn-d" id="nt-del">Удалить</button>' : ''}
+      <button class="btn btn-p" id="nt-sv">Сохранить</button>
+    </div>
+  `);
+  setTimeout(() => {
+    document.getElementById('nt-t').focus();
+    document.querySelectorAll('#nt-tags .tpill').forEach(p => {
+      p.addEventListener('click', () => {
+        document.querySelectorAll('#nt-tags .tpill').forEach(x => x.classList.remove('sel'));
+        if (selTag === p.dataset.tag) selTag = null; else { p.classList.add('sel'); selTag = p.dataset.tag; }
+      });
+    });
+    document.getElementById('nt-sv').onclick = () => {
+      const title = document.getElementById('nt-t').value.trim();
+      const body  = document.getElementById('nt-b').value.trim();
+      if (!title && !body) return;
+      if (note) { const i = notes.findIndex(n => n.id === note.id); if (i > -1) notes[i] = {...notes[i], title, body, tag: selTag}; }
+      else notes.push({ id: uid(), title, body, tag: selTag, created: Date.now() });
+      saveAll(); closeModal(); renderNotes(document.getElementById('notes-search').value);
+    };
+    const d = document.getElementById('nt-del');
+    if (d) d.onclick = () => { notes = notes.filter(n => n.id !== note.id); saveAll(); closeModal(); renderNotes(); };
+  }, 50);
+}
+
+/* ════════════════════════════════════════════════════
+   PROJECTS
+════════════════════════════════════════════════════ */
+function renderProjects() {
+  const outer = document.getElementById('proj-outer'); outer.innerHTML = '';
+
+  const totalOpen = tasks.filter(t => t.status !== 'done').length;
+  const totalDone = tasks.filter(t => t.status === 'done').length;
+  const stats = el('div', 'proj-stats');
+  stats.innerHTML = `
+    <div class="pstat"><div class="pstat-num">${totalOpen}</div><div class="pstat-lbl">Открытых</div></div>
+    <div class="pstat"><div class="pstat-num">${totalDone}</div><div class="pstat-lbl">Закрытых</div></div>
+    <div class="pstat"><div class="pstat-num">${projects.length}</div><div class="pstat-lbl">Проектов</div></div>
+  `;
+  outer.appendChild(stats);
+
+  if (!projects.length) { outer.appendChild(emptyState('📁', 'Нет проектов.\nНажмите + чтобы создать первый.')); return; }
+
+  projects.forEach(proj => {
+    const pt   = tasks.filter(t => t.projectId === proj.id);
+    const dc   = pt.filter(t => t.status === 'done').length;
+    const oc   = pt.length - dc;
+    const pct  = pt.length ? Math.round(dc / pt.length * 100) : 0;
+
+    const card = el('div', 'pcard');
+    card.innerHTML = `
+      <div class="pcard-hdr">
+        <div class="p-dot" style="background:${proj.color}"></div>
+        <div class="p-name">${proj.name}</div>
+        <div class="p-meta">
+          <span class="p-open">${oc} открытых</span>
+          <span class="p-pct" style="color:${proj.color}">${pct}%</span>
+          <span class="p-chev">›</span>
+        </div>
+      </div>
+      ${pt.length ? `<div class="p-prog"><div class="p-prog-bar" style="width:${pct}%;background:${proj.color}"></div></div>` : ''}
+      <div class="p-tasks" id="ptl-${proj.id}" style="display:none"></div>
+      <div class="p-acts">
+        <button class="pact" data-pa="add">+ Задача</button>
+        <button class="pact" data-pa="edit">✏️ Изменить</button>
+        <button class="pact danger" data-pa="del">Удалить</button>
+      </div>
+    `;
+
+    card.querySelector('.pcard-hdr').addEventListener('click', () => {
+      const list = document.getElementById('ptl-' + proj.id);
+      const chev = card.querySelector('.p-chev');
+      const open = list.style.display === 'none';
+      list.style.display = open ? 'block' : 'none';
+      chev.classList.toggle('open', open);
+      if (open) buildProjTasks(proj.id, list);
+    });
+    card.querySelector('[data-pa=add]').onclick  = () => openTaskModal({ projectId: proj.id });
+    card.querySelector('[data-pa=edit]').onclick = () => openProjectModal(proj);
+    card.querySelector('[data-pa=del]').onclick  = () => {
+      if (confirm(`Удалить «${proj.name}»? Задачи останутся, но потеряют привязку.`)) {
+        projects = projects.filter(p => p.id !== proj.id);
+        tasks.forEach(t => { if (t.projectId === proj.id) t.projectId = null; });
+        saveAll(); renderProjects();
+      }
+    };
+    outer.appendChild(card);
+  });
+}
+
+function buildProjTasks(pid, container) {
+  const pt = [...tasks.filter(t => t.projectId === pid)]
+    .sort((a, b) => ({ todo: 0, doing: 1, done: 2 })[a.status] - ({ todo: 0, doing: 1, done: 2 })[b.status]);
+  container.innerHTML = '';
+  if (!pt.length) {
+    container.innerHTML = '<div style="padding:11px 13px;font-size:13px;color:var(--text3)">Нет задач. Нажмите «+ Задача».</div>';
+    return;
+  }
+  pt.forEach(task => {
+    const isDone = task.status === 'done';
+    const item = el('div', 'p-task' + (isDone ? ' pt-done' : ''));
+    item.innerHTML = `
+      <div class="pt-chk">${isDone ? '✓' : ''}</div>
+      <span class="pt-name">${task.title}</span>
+      ${task.date ? `<span class="pt-date">${task.date.slice(5).replace('-','.')}</span>` : ''}
+      <span class="pt-status" style="background:${SCOL[task.status]}22;color:${SCOL[task.status]}">${SLBL[task.status]}</span>
+    `;
+    item.querySelector('.pt-chk').addEventListener('click', e => {
+      e.stopPropagation();
+      const t = tasks.find(x => x.id === task.id);
+      if (t) t.status = t.status === 'done' ? 'todo' : 'done';
+      saveAll(); renderProjects();
+    });
+    item.addEventListener('click', e => {
+      if (e.target.closest('.pt-chk')) return;
+      openTaskModal({}, task);
+    });
+    container.appendChild(item);
+  });
+}
+
+function openProjectModal(proj = null) {
+  let selColor = proj?.color || PCOLS[0];
+  showModal(proj ? 'Редактировать проект' : 'Новый проект', `
+    <div class="fg"><label class="flbl">Название</label><input type="text" id="pj-n" placeholder="Название проекта" value="${proj?.name || ''}"></div>
+    <div class="fg"><label class="flbl">Цвет</label>
+      <div class="accents" id="pj-colors">
+        ${PCOLS.map(c => `<div class="adot ${c === selColor ? 'active' : ''}" data-c="${c}" style="background:${c}"></div>`).join('')}
+      </div>
+    </div>
+    <div class="btn-row">
+      ${proj ? '<button class="btn btn-d" id="pj-del">Удалить</button>' : ''}
+      <button class="btn btn-p" id="pj-sv">Сохранить</button>
+    </div>
+  `);
+  setTimeout(() => {
+    document.getElementById('pj-n').focus();
+    document.querySelectorAll('#pj-colors .adot').forEach(d => {
+      d.addEventListener('click', () => {
+        document.querySelectorAll('#pj-colors .adot').forEach(x => x.classList.remove('active'));
+        d.classList.add('active'); selColor = d.dataset.c;
+      });
+    });
+    document.getElementById('pj-sv').onclick = () => {
+      const name = document.getElementById('pj-n').value.trim(); if (!name) return;
+      if (proj) { const p = projects.find(x => x.id === proj.id); if (p) { p.name = name; p.color = selColor; } }
+      else projects.push({ id: uid(), name, color: selColor });
+      saveAll(); closeModal(); renderProjects();
+    };
+    const d = document.getElementById('pj-del');
+    if (d) d.onclick = () => {
+      if (confirm(`Удалить «${proj.name}»?`)) {
+        projects = projects.filter(p => p.id !== proj.id);
+        tasks.forEach(t => { if (t.projectId === proj.id) t.projectId = null; });
+        saveAll(); closeModal(); renderProjects();
+      }
+    };
+  }, 50);
+}
+
+/* ════════════════════════════════════════════════════
+   MODAL
+════════════════════════════════════════════════════ */
+function showModal(title, body) {
+  document.getElementById('sh-title').textContent = title;
+  document.getElementById('sh-body').innerHTML = body;
+  document.getElementById('overlay').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+function closeModal() {
+  document.getElementById('overlay').classList.remove('open');
+  document.body.style.overflow = '';
+}
+document.getElementById('sh-close').onclick = closeModal;
+document.getElementById('overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('overlay')) closeModal();
+});
+
+/* ════════════════════════════════════════════════════
+   FAB  —  контекстно-зависимый
+════════════════════════════════════════════════════ */
+document.getElementById('fab').addEventListener('click', () => {
+  if (currentTab === 'today')    openTaskModal({ date: dk(curDay) });
+  else if (currentTab === 'tasks')    openTaskModal({});
+  else if (currentTab === 'habits')   openHabitModal();
+  else if (currentTab === 'notes')    openNoteModal();
+  else if (currentTab === 'projects') openProjectModal();
+  else if (currentTab === 'week')     openTaskModal({});
+});
+
+/* ════════════════════════════════════════════════════
+   NAV
+════════════════════════════════════════════════════ */
+document.querySelectorAll('.nav-tab').forEach(btn =>
+  btn.addEventListener('click', () => switchTab(btn.dataset.tab))
+);
+
+/* ════════════════════════════════════════════════════
+   SETTINGS
+════════════════════════════════════════════════════ */
+document.getElementById('btn-dark').addEventListener('click', () => { settings.dark = !settings.dark; saveAll(); applyTheme(); });
+document.getElementById('btn-settings').addEventListener('click', () => document.getElementById('sp').classList.add('open'));
+document.getElementById('sp-back').addEventListener('click',  () => document.getElementById('sp').classList.remove('open'));
+document.getElementById('dark-toggle').addEventListener('click', () => { settings.dark = !settings.dark; saveAll(); applyTheme(); });
+document.getElementById('notes-search').addEventListener('input', e => renderNotes(e.target.value));
+
+const aRow = document.getElementById('accent-row');
+ACCS.forEach(c => {
+  const d = el('div', 'adot' + (c === settings.accent ? ' active' : ''));
+  d.style.background = c; d.dataset.c = c;
+  d.addEventListener('click', () => { settings.accent = c; saveAll(); applyTheme(); });
+  aRow.appendChild(d);
+});
+
+document.getElementById('export-btn').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify({tasks,habits,notes,projects,settings}, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = `planner-${dk(today())}.json`; a.click();
+});
+document.getElementById('import-btn').addEventListener('click', () => document.getElementById('import-file').click());
+document.getElementById('import-file').addEventListener('change', e => {
+  const file = e.target.files[0]; if (!file) return;
+  const r = new FileReader();
+  r.onload = ev => {
+    try {
+      const d = JSON.parse(ev.target.result);
+      if (d.tasks)    { tasks    = d.tasks;    S.set('pl_tasks',    tasks);    }
+      if (d.habits)   { habits   = d.habits;   S.set('pl_habits',   habits);   }
+      if (d.notes)    { notes    = d.notes;    S.set('pl_notes',    notes);    }
+      if (d.projects) { projects = d.projects; S.set('pl_projects', projects); }
+      if (d.settings) { settings = d.settings; S.set('pl_settings', settings); }
+      applyTheme(); refreshCurrentView(); alert('Импорт выполнен!');
+    } catch { alert('Ошибка чтения файла.'); }
+  };
+  r.readAsText(file); e.target.value = '';
+});
+document.getElementById('clear-btn').addEventListener('click', () => {
+  if (confirm('Удалить все данные? Это действие необратимо.')) {
+    tasks = []; habits = { habits: [], log: {} }; notes = []; projects = [];
+    saveAll(); refreshCurrentView();
+  }
+});
+
+/* ════════════════════════════════════════════════════
+   UTILS
+════════════════════════════════════════════════════ */
+function el(tag, cls) {
+  const e = document.createElement(tag || 'div');
+  if (cls) e.className = cls;
+  return e;
+}
+function emptyState(icon, text) {
+  const e = el('div', 'empty-state');
+  e.innerHTML = `<div class="empty-icon">${icon}</div><div class="empty-text">${text.replace(/\n/g,'<br>')}</div>`;
+  return e;
+}
+
+/* ════════════════════════════════════════════════════
+   INIT
+════════════════════════════════════════════════════ */
+applyTheme();
+renderDay();
+</script>
+</body>
+</html>
