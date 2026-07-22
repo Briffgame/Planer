@@ -2,102 +2,71 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
     <title>Planner</title>
     <style>
-        :root { --acc:#5B5FEF; --bg:#fff; --border:#e2e2e7; --text:#111; --text3:#a0a0b0; }
-        body { margin:0; font-family:sans-serif; height:100vh; overflow:hidden; }
-        #app { display:flex; flex-direction:column; height:100vh; }
-        #views { flex:1; overflow:hidden; position:relative; }
-        .view { position:absolute; inset:0; overflow-y:auto; display:none; padding:20px; }
-        .view.active { display:block; }
-        #nav { display:flex; border-top:1px solid var(--border); padding:10px; background:#fff; }
-        .nav-tab { flex:1; text-align:center; padding:10px; cursor:pointer; color:var(--text3); font-size:12px; }
-        .nav-tab.active { color:var(--acc); font-weight:bold; }
-        .card { border:1px solid var(--border); padding:15px; margin-bottom:10px; border-radius:8px; }
-        input { width:100%; padding:10px; margin-bottom:10px; border:1px solid var(--border); box-sizing:border-box; }
-        button { background:var(--acc); color:#fff; border:none; padding:10px; width:100%; border-radius:8px; cursor:pointer; }
+        body { font-family: sans-serif; margin: 0; padding: 0; background: #fff; }
+        .view { display: none; padding: 20px; }
+        .view.active { display: block; }
+        .nav { display: flex; position: fixed; bottom: 0; width: 100%; border-top: 1px solid #ccc; background: #eee; }
+        .nav-btn { flex: 1; padding: 15px; text-align: center; cursor: pointer; }
+        .nav-btn.active { background: #ddd; font-weight: bold; }
     </style>
 </head>
 <body>
 
-<div id="app">
-    <div id="views">
-        <div class="view active" id="view-today"><h2>Сегодня</h2></div>
-        <div class="view" id="view-week"><h2>Неделя</h2></div>
-        <div class="view" id="view-tasks"><h2>Задачи</h2></div>
-        <div class="view" id="view-habits"><h2>Привычки</h2></div>
-        <div class="view" id="view-notes"><h2>Заметки</h2></div>
-        <div class="view" id="view-projects"><h2>Проекты</h2></div>
-        <div class="view" id="view-ideas">
-            <h2>Идеи</h2>
-            <input type="text" id="new-idea" placeholder="Новая идея...">
-            <button onclick="window.addIdea()">Добавить</button>
-            <div id="ideas-list" style="margin-top:20px;"></div>
-        </div>
-    </div>
-
-    <div id="nav">
-        <div class="nav-tab active" onclick="window.switchTab('today')">День</div>
-        <div class="nav-tab" onclick="window.switchTab('week')">Неделя</div>
-        <div class="nav-tab" onclick="window.switchTab('tasks')">Задачи</div>
-        <div class="nav-tab" onclick="window.switchTab('habits')">Привычки</div>
-        <div class="nav-tab" onclick="window.switchTab('notes')">Заметки</div>
-        <div class="nav-tab" onclick="window.switchTab('projects')">Проекты</div>
-        <div class="nav-tab" onclick="window.switchTab('ideas')">Идеи</div>
-    </div>
+<div id="view-today" class="view active"><h1>Сегодня</h1><p>Это вкладка Сегодня</p></div>
+<div id="view-ideas" class="view">
+    <h1>Идеи</h1>
+    <input type="text" id="idea-input" placeholder="Введите идею">
+    <button onclick="addIdea()">Добавить</button>
+    <div id="ideas-list"></div>
 </div>
 
-<script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getFirestore, doc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+<div class="nav">
+    <div class="nav-btn active" onclick="switchTab('today', this)">Сегодня</div>
+    <div class="nav-btn" onclick="switchTab('ideas', this)">Идеи</div>
+</div>
 
-    const firebaseConfig = { apiKey: "AIzaSyDBHw85SZcyfT2cwkPoEOuTb_qUVnyJcVw", projectId: "planer-ca414", appId: "1:28677358123:web:bcfcd306a02d001bf4e06e" };
-    const db = getFirestore(initializeApp(firebaseConfig));
+<script>
+    console.log("Скрипт загрузился!");
 
-    // Данные
-    let ideas = JSON.parse(localStorage.getItem('pl_ideas') || '[]');
-
-    // Функция смены вкладок (обязательно через window для module)
-    window.switchTab = function(tab) {
+    // Переключение вкладок
+    function switchTab(id, el) {
         document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-        document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
-        document.getElementById('view-' + tab).classList.add('active');
-        // Подсветка таба
-        document.querySelectorAll('.nav-tab').forEach(t => {
-            if(t.innerText.toLowerCase() === tab) t.classList.add('active');
-        });
-        if(tab === 'ideas') window.renderIdeas();
-    };
+        document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+        
+        document.getElementById('view-' + id).classList.add('active');
+        el.classList.add('active');
+    }
 
-    // Рендер идей
-    window.renderIdeas = function() {
+    // Идеи
+    let ideas = JSON.parse(localStorage.getItem('my_ideas') || '[]');
+
+    function renderIdeas() {
         const list = document.getElementById('ideas-list');
         list.innerHTML = '';
-        ideas.forEach((item, index) => {
-            const div = document.createElement('div');
-            div.className = 'card';
-            div.innerHTML = `${item} <button style="background:#ff4444; margin-top:5px;" onclick="window.delIdea(${index})">Удалить</button>`;
-            list.appendChild(div);
+        ideas.forEach((val, i) => {
+            list.innerHTML += `<div>${val} <button onclick="delIdea(${i})">Удалить</button></div>`;
         });
-    };
+    }
 
-    // Добавление
-    window.addIdea = function() {
-        const input = document.getElementById('new-idea');
-        if (!input.value) return;
+    function addIdea() {
+        const input = document.getElementById('idea-input');
+        if(!input.value) return;
         ideas.push(input.value);
-        localStorage.setItem('pl_ideas', JSON.stringify(ideas));
+        localStorage.setItem('my_ideas', JSON.stringify(ideas));
         input.value = '';
-        window.renderIdeas();
-    };
+        renderIdeas();
+    }
 
-    // Удаление
-    window.delIdea = function(index) {
-        ideas.splice(index, 1);
-        localStorage.setItem('pl_ideas', JSON.stringify(ideas));
-        window.renderIdeas();
-    };
+    function delIdea(i) {
+        ideas.splice(i, 1);
+        localStorage.setItem('my_ideas', JSON.stringify(ideas));
+        renderIdeas();
+    }
+
+    // Запуск при старте
+    renderIdeas();
 </script>
 
 </body>
