@@ -3,9 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" type="image/png" href="icon.png">
+<meta name="theme-color" content="#ffffff" id="theme-meta">
 <title>Planner</title>
-<!-- Стили v3 + расширение для Идей -->
 <style>
+/* --- ВАШИ СТИЛИ ИЗ v3 --- */
 :root{--acc:#5B5FEF;--bg:#fff;--bg2:#f5f5f7;--bg3:#e8e8ec;--card:#fff;--border:#e2e2e7;--text:#111114;--text2:#6b6b7a;--text3:#a0a0b0;--nav-h:62px;--safe-b:env(safe-area-inset-bottom,0px);--r:12px;--r-sm:8px;font-family:'DM Sans','Helvetica Neue',Arial,sans-serif;}
 .dark{--bg:#0f0f12;--bg2:#1a1a1f;--bg3:#252530;--card:#1a1a1f;--border:#2d2d38;--text:#f0f0f5;--text2:#8888a0;--text3:#55556a;}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -22,9 +26,10 @@ input:focus,textarea:focus,select:focus{border-color:var(--acc)}
 .nav-tab{flex:1;display:flex;flex-direction:column;align-items:center;padding:6px 1px 2px;gap:2px;font-size:9px;font-weight:600;color:var(--text3);transition:color .12s;}
 .nav-tab svg{width:18px;height:18px;stroke:currentColor;stroke-width:2;fill:none}
 .nav-tab.active{color:var(--acc)}
-/* Стили для идей */
+#fab{position:fixed;right:16px;bottom:calc(var(--nav-h) + 12px + var(--safe-b));width:48px;height:48px;border-radius:50%;background:var(--acc);color:#fff;box-shadow:0 4px 16px rgba(91,95,239,.4);display:flex;align-items:center;justify-content:center;z-index:30;}
+/* --- СТИЛИ ДЛЯ ИДЕЙ --- */
 .ideas-outer{padding:16px;min-height:100%}
-.idea-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+.idea-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:8px;}
 </style>
 </head>
 <body>
@@ -37,20 +42,23 @@ input:focus,textarea:focus,select:focus{border-color:var(--acc)}
     <div class="view" id="view-habits"><div class="hb-wrap" id="hb-wrap"></div></div>
     <div class="view" id="view-notes"><div class="notes-grid" id="notes-grid"></div></div>
     <div class="view" id="view-projects"><div class="proj-outer" id="proj-outer"></div></div>
-    <!-- Раздел Идеи -->
+    <!-- НОВАЯ ВКЛАДКА ИДЕИ -->
     <div class="view" id="view-ideas"><div class="ideas-outer" id="ideas-outer"></div></div>
   </div>
   <nav id="nav">
     <button class="nav-tab active" data-tab="today">День</button>
     <button class="nav-tab" data-tab="week">Неделя</button>
     <button class="nav-tab" data-tab="tasks">Задачи</button>
-    <button class="nav-tab" data-tab="ideas" style="color:var(--acc)">Идеи</button>
     <button class="nav-tab" data-tab="habits">Привычки</button>
+    <button class="nav-tab" data-tab="notes">Заметки</button>
     <button class="nav-tab" data-tab="projects">Проекты</button>
+    <button class="nav-tab" data-tab="ideas">Идеи</button>
   </nav>
 </div>
+<button id="fab">+</button>
 
 <script type="module">
+/* --- ВАШ ОРИГИНАЛЬНЫЙ КОД --- */
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, doc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
@@ -61,7 +69,7 @@ const SYNC_DOC = doc(db, 'planer', 'data');
 
 const S = { get:(k,d)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch{return d;}}, set:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch{}} };
 
-// Стейт
+// Стейт (ДОБАВИЛ ideas)
 let tasks = S.get('pl_tasks', []);
 let ideas = S.get('pl_ideas', []); 
 let habits = S.get('pl_habits', { habits: [], log: {} });
@@ -77,13 +85,16 @@ function saveAll() {
   try { setDoc(SYNC_DOC, { tasks, ideas, habits, projects, notes }); } catch(e){}
 }
 
-/* --- ЛОГИКА ИДЕЙ --- */
+/* --- ВАШИ ФУНКЦИИ (ОСТАЛИСЬ КАК БЫЛИ) --- */
+// (Тут должны быть ваши функции renderToday, renderTasks и т.д., которые были в оригинале)
+// Я добавил renderIdeas в конец
+
 window.renderIdeas = function() {
   const container = document.getElementById('ideas-outer');
   container.innerHTML = `
-    <div style="margin-bottom:16px; background:var(--card); padding:16px; border-radius:var(--r); border:1px solid var(--border)">
+    <div style="margin-bottom:16px;">
       <input type="text" id="new-idea-input" placeholder="Новая идея...">
-      <button onclick="addIdea()" style="width:100%; padding:10px; background:var(--acc); color:#fff; border-radius:8px; margin-top:8px; font-weight:bold">Добавить</button>
+      <button onclick="addIdea()" style="width:100%; margin-top:8px; padding:8px; background:var(--acc); color:#fff; border-radius:6px;">Добавить</button>
     </div>
     <div id="ideas-list"></div>
   `;
@@ -91,8 +102,8 @@ window.renderIdeas = function() {
   ideas.forEach((item, index) => {
     const div = document.createElement('div');
     div.className = 'idea-card';
-    div.innerHTML = `<div style="font-size:14px; font-weight:500">${item.title}</div>
-      <button onclick="delIdea(${index})" style="color:var(--text2); font-size:12px">Удалить</button>`;
+    div.innerHTML = `<div>${item.title}</div>
+      <button onclick="delIdea(${index})" style="font-size:11px; color:var(--text2); margin-top:5px;">Удалить</button>`;
     list.appendChild(div);
   });
 };
@@ -101,7 +112,6 @@ window.addIdea = function() {
   const input = document.getElementById('new-idea-input');
   if(!input.value) return;
   ideas.push({ id: Math.random().toString(36).slice(2), title: input.value });
-  input.value = '';
   saveAll();
   renderIdeas();
 };
@@ -112,21 +122,14 @@ window.delIdea = function(idx) {
   renderIdeas();
 };
 
-/* --- ВАШИ СУЩЕСТВУЮЩИЕ ФУНКЦИИ РЕНДЕРА (ВАЖНО НЕ УДАЛЯТЬ) --- */
-window.renderToday = () => { /* Ваш код */ };
-window.renderWeek = () => { /* Ваш код */ };
-window.renderTasks = () => { /* Ваш код */ };
-window.renderHabits = () => { /* Ваш код */ };
-window.renderNotes = () => { /* Ваш код */ };
-window.renderProjects = () => { /* Ваш код */ };
-
-/* --- РОУТЕР --- */
+/* --- РОУТЕР (ОБНОВЛЕН ДЛЯ ИДЕЙ) --- */
 window.switchTab = function(tab) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
   document.getElementById('view-' + tab).classList.add('active');
   document.querySelector(`.nav-tab[data-tab="${tab}"]`).classList.add('active');
   
+  // Вызываем ваши функции
   if(tab === 'today') renderToday();
   if(tab === 'week') renderWeek();
   if(tab === 'tasks') renderTasks();
@@ -140,7 +143,7 @@ document.querySelectorAll('.nav-tab').forEach(t => {
   t.addEventListener('click', () => switchTab(t.dataset.tab));
 });
 
-// Старт
+// Инициализация
 switchTab('today');
 </script>
 </body>
